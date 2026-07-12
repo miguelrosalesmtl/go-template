@@ -1,0 +1,105 @@
+# Local development stack: Postgres, a one-shot migration job, and the app.
+#
+# There is no Redis and no cache tier. Postgres is the only source of truth, so
+# there is nothing to invalidate and no second system to keep consistent.
+#
+#   docker compose up --build     bring it up
+#   docker compose down -v        tear it down, including the data volume
+
+services:
+  postgres:
+    # Postgres 18+ is required: the schema uses the built-in uuidv7() function
+    # for every primary key. On an older server, every migration will fail at
+    # "function uuidv7() does not exist".
+    image: docker.io/library/postgres:18-alpine
+    environment:
+      # ONE user, owning ONE database: the app database. The official image creates
+      # the database named by POSTGRES_DB and makes POSTGRES_USER its owner, so this
+      # is all it takes -- no bootstrap SQL, no second role.
+      #
+      # The app therefore never connects as the cluster superuser, and never touches
+      # any database but its own.
+      #
+      # CHANGE THE PASSWORD before this leaves your laptop.
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+    ports:
+      - "5432:5432"
+    volumes:
+      # The 18+ images place data in a subdirectory of this path, so mount the
+      # whole directory rather than .../data, per the official image guidance.
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Applies the embedded goose migrations, then exits. Same image as the app --
+  # the migrations are compiled into the binary. The app waits for this to exit
+  # successfully, so it can never start against an unmigrated database.
+  migrate:
+    build: .
+    command: ["migrate", "up"]
+    environment:
+      APP_ENV: development
+      POSTGRES_HOST: postgres
+      # The same single user as the app. It owns the database, so it can create
+      # tables in it -- no superuser needed anywhere.
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  app:
+    build: .
+    environment:
+      APP_ENV: development
+      APP_DEBUG: "true"
+      SERVER_PORT: "8080"
+      POSTGRES_HOST: postgres
+
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+
+      # The app talks to Postgres over the private compose network, so plaintext
+      # is fine here. In production, set this to require (or better) -- startup
+      # refuses to run with sslmode=disable when APP_ENV=production.
+      POSTGRES_SSLMODE: disable
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # A throwaway Postgres for integration tests, on a different port so it cannot
+  # collide with the development database above. Started by `make test-integration`.
+  #
+  # tmpfs: the data directory lives in RAM. Tests are faster, and there is no
+  # volume to remember to clean up.
+  postgres-test:
+    image: docker.io/library/postgres:18-alpine
+    profiles: ["test"]
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+    ports:
+      - "5433:5432"
+    tmpfs:
+      - /var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  pgdata:

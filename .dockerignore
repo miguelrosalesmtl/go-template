@@ -1,0 +1,12 @@
+# Keep the build context small and, more importantly, keep secrets out of it:
+# anything sent to the daemon can end up in an image layer.
+.env
+.git/
+.github/
+bin/
+*.md
+!README.md
+
+# Never let a local build artefact shadow the one compiled in the image.
+*.out
+coverage.html

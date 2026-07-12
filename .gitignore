@@ -1,0 +1,19 @@
+# Local configuration. Holds real credentials -- never commit it.
+.env
+
+# Build output
+/bin/
+*.exe
+
+# Test and coverage artefacts
+*.out
+coverage.html
+
+# Editor / tooling
+.claude/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
