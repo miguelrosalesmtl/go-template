@@ -91,7 +91,6 @@ n=$(eval $PG "\"SELECT count(*) FROM audit_log WHERE action='access.denied'\"")
                || { echo "  FAIL  the 403 left no audit trace"; fail=$((fail+1)); }
 
 # Escalation attempt.
-OWNER_ID=$(roleid "$ALICE" owner)
 req POST /tenants/acme/roles "$MALLORY" '{"key":"backdoor","name":"Backdoor","permissions":["tenant.delete"]}' >/dev/null
 n=$(eval $PG "\"SELECT count(*) FROM audit_log WHERE action='access.escalation_denied'\"")
 [ "$n" -ge 1 ] && { echo "  PASS  the escalation attempt was recorded ($n)"; pass=$((pass+1)); } \

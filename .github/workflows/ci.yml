@@ -53,9 +53,13 @@ jobs:
       - name: shellcheck the e2e suites
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
-          # SC2086 (unquoted) is deliberate in these scripts: DB_EXEC and SERVER_CMD
-          # are command PREFIXES that must word-split.
-          shellcheck -e SC2086,SC2181,SC2015 scripts/e2e/*.sh
+          # Exclusions, each for a reason:
+          #   SC2086  unquoted expansion -- DELIBERATE. DB_EXEC and SERVER_CMD are
+          #           command PREFIXES and must word-split.
+          #   SC2317  "unreachable" -- a false positive on helper functions like
+          #           logs(), which shellcheck cannot see being called indirectly.
+          #   SC2181  $? checks, and SC2015 A && B || C -- idiomatic in these scripts.
+          shellcheck -e SC2086,SC2317,SC2181,SC2015 scripts/e2e/*.sh
 
   # ---------------------------------------------------------------- tests
   test:

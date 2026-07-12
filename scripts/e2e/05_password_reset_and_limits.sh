@@ -95,7 +95,7 @@ check "a bogus reset token -> 400" 400 "$code"
 echo "== RATE LIMITING =="
 # The stack under test runs with a small allowance; hammer login for one email.
 codes=""
-for i in $(seq 1 15); do
+for _ in $(seq 1 15); do
   codes="$codes$(req POST /auth/login - '{"email":"ratelimit@example.com","password":"wrong-password-here"}') "
 done
 echo "        codes: $codes"
