@@ -438,8 +438,30 @@ should leave the load balancer, not restart.
 ```sh
 make test              # unit tests; integration tests SKIP without a database
 make test-integration  # starts a throwaway Postgres, runs everything
+make test-e2e          # drives the running stack over real HTTP (needs `make up`)
 make cover             # same, plus an HTML coverage report
 ```
+
+**45 test functions, 83 subtests, ~2,800 lines of test** against a real Postgres,
+plus **171 HTTP checks** across 5 e2e suites in `scripts/e2e/`. That's roughly a 1:2
+test-to-source ratio, deliberately: the properties that matter here — tenant
+isolation, the escalation guard, immediate session revocation, the anti-enumeration
+behaviour — are exactly the ones you cannot eyeball.
+
+CI (`.github/workflows/ci.yml`) runs four jobs on every push: static checks
+(`vet`, `gofmt`, `go mod tidy` freshness, `shellcheck`), tests against a real
+Postgres **plus a full migrate down-to-zero-and-back**, the e2e suites against a
+real running server, and a Docker image build.
+
+Two CI details worth copying if you fork the pattern:
+
+- **It asserts the integration tests didn't silently skip.** They skip without
+  `TEST_POSTGRES_DSN`, which is what keeps `go test ./...` working on a laptop with
+  no database — and which would otherwise let a broken DSN turn the whole job green
+  while proving nothing.
+- **Each e2e suite gets a fresh database.** They each assume they're the only tenant
+  in the world, and a leftover row from the previous suite reads as a bug that
+  isn't there.
 
 Integration tests run against a **real Postgres**, because what they're checking
 *is* the SQL. A mocked database would happily "prove" that a query missing its

@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 # RBAC over the real HTTP API: custom roles, permission unions, and — above all —
 # every escalation attack I could think of.
+#
+# Overridable so these run against compose OR a plain binary (see .github/workflows):
+#   API_BASE    where the API is            (default http://localhost:8080)
+#   SERVER_CMD  how to run the server CLI   (default: docker compose exec -T app /app/server)
+#   DB_EXEC     how to reach psql           (default: docker compose exec -T postgres)
+#   APP_LOGS    how to read the app's log   (default: docker compose logs app)
+#               -- the log IS the inbox when MAIL_BACKEND=log
 set -uo pipefail
 API="${API_BASE:-http://localhost:8080}/api/v1"
 pass=0; fail=0

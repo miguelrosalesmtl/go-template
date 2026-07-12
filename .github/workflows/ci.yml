@@ -1,0 +1,264 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  GO_VERSION: "1.26"
+
+  # The single database user that owns the single database. Same shape as
+  # docker-compose.yml, so CI exercises the deployment the template actually ships.
+  POSTGRES_USER: app
+  POSTGRES_PASSWORD: app
+  POSTGRES_DB: app
+
+jobs:
+  # ---------------------------------------------------------------- static
+  check:
+    name: vet, fmt, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: go build
+        run: go build ./...
+
+      - name: go vet
+        run: go vet ./...
+
+      # gofmt exits 0 even when it reformats, so the diff IS the assertion.
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::these files are not gofmt'd:"
+            echo "$unformatted"
+            gofmt -d .
+            exit 1
+          fi
+
+      - name: go mod tidy is committed
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum \
+            || { echo "::error::go.mod/go.sum are stale -- run 'go mod tidy' and commit"; exit 1; }
+
+      - name: shellcheck the e2e suites
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          # SC2086 (unquoted) is deliberate in these scripts: DB_EXEC and SERVER_CMD
+          # are command PREFIXES that must word-split.
+          shellcheck -e SC2086,SC2181,SC2015 scripts/e2e/*.sh
+
+  # ---------------------------------------------------------------- tests
+  test:
+    name: tests (real Postgres)
+    runs-on: ubuntu-latest
+
+    # The integration tests run against a REAL Postgres, because what they check IS
+    # the SQL: tenant isolation, the append-only trigger, uuidv7 defaults, partial
+    # unique indexes. A mock would happily "prove" that a query missing its
+    # tenant_id filter is correctly isolated -- which is the exact bug they exist to
+    # catch.
+    #
+    # Postgres 18+ is required: every primary key defaults to the built-in uuidv7().
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+          POSTGRES_DB: app
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U app -d app"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # Without TEST_POSTGRES_DSN the integration tests SKIP rather than fail, which
+      # is what keeps `go test ./...` working on a laptop with no database. That also
+      # means a broken DSN here would silently skip everything and go green -- so
+      # prove the tests actually ran.
+      - name: run tests
+        env:
+          TEST_POSTGRES_DSN: postgres://app:app@localhost:5432/app?sslmode=disable
+        run: go test ./... -count=1 -race -covermode=atomic -coverprofile=coverage.out -v 2>&1 | tee test.log
+
+      - name: the integration tests did NOT silently skip
+        run: |
+          if grep -q "SKIP.*TEST_POSTGRES_DSN" test.log; then
+            echo "::error::integration tests skipped -- TEST_POSTGRES_DSN is not reaching them, so this job proved nothing"
+            exit 1
+          fi
+          passed=$(grep -c '^--- PASS' test.log || true)
+          echo "::notice::$passed test functions passed against a real Postgres"
+
+      - name: migrations roll all the way down and back up
+        env:
+          POSTGRES_HOST: localhost
+        run: |
+          go run ./cmd/server migrate up
+          go run ./cmd/server migrate reset   # every Down must work, not just every Up
+          go run ./cmd/server migrate up
+          go run ./cmd/server migrate status
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: coverage.out
+
+  # ---------------------------------------------------------------- e2e
+  e2e:
+    name: e2e (real HTTP)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+          POSTGRES_DB: app
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U app -d app"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: install jq and psql
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq jq postgresql-client
+
+      - name: build
+        run: go build -o bin/server ./cmd/server
+
+      - name: migrate
+        env:
+          POSTGRES_HOST: localhost
+        run: ./bin/server migrate up
+
+      # MAIL_BACKEND=log prints every email -- invitation and password-reset links
+      # included -- to the application log. The suites read the links out of it,
+      # exactly as a user reads them out of their inbox. It is also why startup
+      # REFUSES this backend when APP_ENV=production.
+      #
+      # A small rate-limit window, because suite 05 deliberately trips the limiter.
+      - name: start the server
+        env:
+          POSTGRES_HOST: localhost
+          APP_ENV: development
+          APP_DEBUG: "true"
+          MAIL_BACKEND: log
+          SERVER_PORT: "8080"
+          CORS_ALLOWED_ORIGINS: https://app.example.com
+          RATE_LIMIT_ATTEMPTS: "10"
+          RATE_LIMIT_WINDOW: 1m
+        run: |
+          ./bin/server > app.log 2>&1 &
+          echo $! > server.pid
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:8080/healthz >/dev/null && break
+            sleep 1
+          done
+          curl -sf http://localhost:8080/healthz || { echo "::error::server never came up"; cat app.log; exit 1; }
+
+      - name: security headers and CORS
+        run: |
+          h=$(curl -s -D - -o /dev/null http://localhost:8080/healthz)
+          for want in "X-Content-Type-Options: nosniff" "X-Frame-Options: DENY" "Referrer-Policy: no-referrer"; do
+            echo "$h" | grep -qi "$want" || { echo "::error::missing header: $want"; exit 1; }
+          done
+          # The allowlisted origin is echoed; an unknown one must NOT be.
+          curl -s -D - -o /dev/null -H 'Origin: https://app.example.com' http://localhost:8080/healthz \
+            | grep -qi 'access-control-allow-origin: https://app.example.com' \
+            || { echo "::error::CORS did not echo the allowlisted origin"; exit 1; }
+          if curl -s -D - -o /dev/null -H 'Origin: https://evil.example.com' http://localhost:8080/healthz \
+            | grep -qi 'access-control-allow-origin'; then
+            echo "::error::CORS echoed an origin that is NOT on the allowlist"
+            exit 1
+          fi
+
+      # Each suite gets a FRESH database. They assume they are the only tenant in the
+      # world, and a leftover row from the previous suite reads as a bug that is not
+      # there -- which is exactly how I wasted a cycle building this.
+      - name: e2e suites
+        env:
+          PGPASSWORD: app
+          API_BASE: http://localhost:8080
+          SERVER_CMD: ./bin/server
+          DB_EXEC: env PGPASSWORD=app PGHOST=localhost
+          APP_LOGS: cat app.log
+          POSTGRES_HOST: localhost
+        run: |
+          failed=0
+          for suite in scripts/e2e/*.sh; do
+            echo "::group::$(basename "$suite")"
+
+            # Fresh database + a fresh server, so no suite can see another's rows.
+            kill "$(cat server.pid)" 2>/dev/null || true
+            ./bin/server migrate reset >/dev/null 2>&1
+            ./bin/server migrate up    >/dev/null 2>&1
+            : > app.log
+            APP_ENV=development APP_DEBUG=true MAIL_BACKEND=log SERVER_PORT=8080 \
+              CORS_ALLOWED_ORIGINS=https://app.example.com \
+              ./bin/server >> app.log 2>&1 &
+            echo $! > server.pid
+            for i in $(seq 1 60); do curl -sf http://localhost:8080/healthz >/dev/null && break; sleep 1; done
+
+            if bash "$suite"; then
+              echo "::endgroup::"
+            else
+              echo "::endgroup::"
+              echo "::error::$(basename "$suite") FAILED"
+              failed=1
+            fi
+          done
+          kill "$(cat server.pid)" 2>/dev/null || true
+          exit $failed
+
+      - name: server log on failure
+        if: failure()
+        run: tail -100 app.log
+
+  # ---------------------------------------------------------------- image
+  docker:
+    name: image builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The image is the app AND its own migrator -- the migrations are compiled in
+      # via //go:embed. If this breaks, `docker compose up` breaks, so it is worth a
+      # job of its own even though nothing here runs it.
+      - name: build the distroless image
+        run: docker build -t go-template:ci .
+
+      - name: the binary runs and knows its own subcommands
+        run: |
+          docker run --rm go-template:ci --help 2>&1 | tee usage.txt || true
+          grep -q "migrate" usage.txt || { echo "::error::the image cannot report its subcommands"; exit 1; }

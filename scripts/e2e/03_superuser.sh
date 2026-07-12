@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
 # Exercise the superuser over the real HTTP API + the real CLI.
+#
+# Overridable so these run against compose OR a plain binary (see .github/workflows):
+#   API_BASE    where the API is            (default http://localhost:8080)
+#   SERVER_CMD  how to run the server CLI   (default: docker compose exec -T app /app/server)
+#   DB_EXEC     how to reach psql           (default: docker compose exec -T postgres)
+#   APP_LOGS    how to read the app's log   (default: docker compose logs app)
+#               -- the log IS the inbox when MAIL_BACKEND=log
 set -uo pipefail
 API="${API_BASE:-http://localhost:8080}/api/v1"
 pass=0; fail=0
@@ -55,7 +62,7 @@ code=$(req GET /admin/users "$ROOT")
 check "plain user hitting /admin/users -> 404" 404 "$code"
 
 echo "== grant via CLI (no HTTP route can do this) =="
-OUT=$(${APP_EXEC:-docker compose exec -T app} /app/server grant-superuser root@example.com 2>&1)
+OUT=$(${SERVER_CMD:-docker compose exec -T app /app/server} grant-superuser root@example.com 2>&1)
 echo "  CLI: $OUT"
 echo "$OUT" | grep -q 'granted superuser to root@example.com' \
   && { echo "  PASS  CLI granted superuser"; pass=$((pass+1)); } \
@@ -127,7 +134,7 @@ code=$(req GET /auth/me "$ALICE")
 check "alice is still not a superuser" "false" "$(jqr .is_superuser)"
 
 echo "== revoke via CLI =="
-${APP_EXEC:-docker compose exec -T app} /app/server revoke-superuser root@example.com >/dev/null 2>&1
+${SERVER_CMD:-docker compose exec -T app /app/server} revoke-superuser root@example.com >/dev/null 2>&1
 code=$(req GET /admin/tenants "$ROOT")
 check "revoked: staff surface gone -> 404" 404 "$code"
 code=$(req GET /tenants/acme "$ROOT")
