@@ -44,6 +44,48 @@ an isolated account. A **membership** links the two and carries **roles**.
 The active organization is carried in the URL: every organization-scoped route lives under
 `/api/v1/organizations/{organization}/…`, where `{organization}` is the slug.
 
+## Users
+
+A user is **one global account** — a single email and password — not a per-organization
+login. The same account belongs to as many organizations as it likes, and there is **no
+separate "admin user" or "staff user" account type**: what a user may do is decided
+entirely by *where* they are.
+
+**You get into an organization one of two ways**, and there is no third (bar the
+superuser, below):
+
+- **Create one**, and you become its `owner`.
+- **Accept an invitation**, and you join with the role the inviter chose for you.
+
+Without one of those you have no access to an organization at all — not even the
+knowledge that it exists. **Membership _is_ authorization.**
+
+**Roles live on the membership, so they are per-organization.** The same person can be an
+`owner` of organization A, a plain `member` of B, and a custom "Billing Manager" of C, all
+at once and all independent — the roles you hold in one are invisible to the others. When a
+request arrives, only the roles you hold *in that organization* are loaded, and your
+permissions are their union. See [RBAC](#rbac) for how that is enforced.
+
+**Three things are properties of the account itself**, not of any one membership:
+
+| Attribute | What it means |
+| --- | --- |
+| `is_active` | A deactivated account is locked out on its **next request** — deactivating revokes every session in the same transaction, rather than waiting for a 30-day token to expire. Toggled on the superuser staff surface. |
+| `email_verified` | Gates **organization creation** (not login), when `AUTH_REQUIRE_VERIFIED_EMAIL=true`. See [Email verification](#email-verification). |
+| `is_superuser` | The **global operator** flag: enter any organization, plus the `/admin` staff surface. Not a role, and grantable only from the CLI. See [The superuser](#the-superuser). |
+
+**There is a cap on organizations per user**, `AUTH_MAX_ORGANIZATIONS_PER_USER` (default
+**10**; `0` = unlimited). Read what it actually does: it counts **all** the organizations
+you belong to, but it only gates **creating** a new one — accepting an invitation is never
+capped. It is an abuse and cost control (one account cannot spin up unlimited organizations
+as free storage), not a limit on how many organizations may invite you.
+
+So there are really just **two tiers of access**: an ordinary user, whose reach is exactly
+the organizations they are a member of and the roles they hold in each; and the
+**superuser**, the installation operator who can enter any organization at all. Anything in
+between — an operator scoped to *some* organizations without a membership in each — would be
+a new concept, and the template does not ship one today.
+
 ## RBAC
 
 **Permissions come from code. Roles are data.**
