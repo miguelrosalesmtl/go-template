@@ -103,13 +103,13 @@ func (h errorHandler) handle(w http.ResponseWriter, r *http.Request, err error) 
 		writeError(w, http.StatusConflict, "that email is already registered")
 
 	case errors.Is(err, identity.ErrSlugTaken):
-		writeError(w, http.StatusConflict, "that tenant slug is already taken")
+		writeError(w, http.StatusConflict, "that organization slug is already taken")
 
 	case errors.Is(err, identity.ErrAlreadyMember):
-		writeError(w, http.StatusConflict, "that user is already a member of this tenant")
+		writeError(w, http.StatusConflict, "that user is already a member of this organization")
 
 	case errors.Is(err, identity.ErrLastOwner):
-		writeError(w, http.StatusConflict, "a tenant must always have at least one owner")
+		writeError(w, http.StatusConflict, "an organization must always have at least one owner")
 
 	case errors.Is(err, identity.ErrEscalation):
 		// 403, and the message names the permissions the caller lacked. A bare
@@ -126,11 +126,11 @@ func (h errorHandler) handle(w http.ResponseWriter, r *http.Request, err error) 
 			"this role is still assigned to members -- reassign them before deleting it")
 
 	case errors.Is(err, identity.ErrRoleKeyTaken):
-		writeError(w, http.StatusConflict, "a role with that key already exists in this tenant")
+		writeError(w, http.StatusConflict, "a role with that key already exists in this organization")
 
 	case errors.Is(err, identity.ErrNoRoles):
 		writeError(w, http.StatusBadRequest,
-			"a member must hold at least one role -- remove them from the tenant instead")
+			"a member must hold at least one role -- remove them from the organization instead")
 
 	case errors.Is(err, identity.ErrInvitationInvalid):
 		writeError(w, http.StatusBadRequest, "this invitation is invalid or has expired")
@@ -148,8 +148,8 @@ func (h errorHandler) handle(w http.ResponseWriter, r *http.Request, err error) 
 		writeError(w, http.StatusForbidden,
 			"verify your email address first -- POST /api/v1/auth/email/verify/resend to get a new link")
 
-	case errors.Is(err, identity.ErrTooManyTenants):
-		writeError(w, http.StatusConflict, "you have reached the maximum number of tenants")
+	case errors.Is(err, identity.ErrTooManyOrganizations):
+		writeError(w, http.StatusConflict, "you have reached the maximum number of organizations")
 
 	case errors.Is(err, identity.ErrMailFailed):
 		// 502, not 500, and not 201. The thing WAS created -- the invitation exists
@@ -230,7 +230,7 @@ func (h errorHandler) auditDenial(r *http.Request, err error) {
 
 	event := audit.Event{Action: action, Metadata: metadata}
 
-	// The request may have failed before authentication, or before the tenant was
+	// The request may have failed before authentication, or before the organization was
 	// resolved, so neither is assumed. An unattributed denial is still worth
 	// recording -- often more so.
 	if user, ok := tryUserFrom(r.Context()); ok {
@@ -238,9 +238,9 @@ func (h errorHandler) auditDenial(r *http.Request, err error) {
 		metadata["email"] = user.Email
 	}
 	if access, ok := tryAccessFrom(r.Context()); ok {
-		event.TenantID = &access.Tenant.ID
-		event.TargetType = "tenant"
-		event.TargetID = access.Tenant.ID.String()
+		event.OrganizationID = &access.Organization.ID
+		event.TargetType = "organization"
+		event.TargetID = access.Organization.ID.String()
 	}
 
 	// On the POOL, never in a transaction -- see the type comment. The request's
@@ -272,8 +272,8 @@ func (h errorHandler) auditDenial(r *http.Request, err error) {
 	if event.ActorUserID != nil {
 		attrs = append(attrs, slog.String("user_id", event.ActorUserID.String()))
 	}
-	if event.TenantID != nil {
-		attrs = append(attrs, slog.String("tenant_id", event.TenantID.String()))
+	if event.OrganizationID != nil {
+		attrs = append(attrs, slog.String("organization_id", event.OrganizationID.String()))
 	}
 	h.log.Warn("security event", attrs...)
 }

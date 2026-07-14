@@ -36,7 +36,7 @@ func securityHeaders(next http.Handler) http.Handler {
 		// Belt and braces for the same thing on older browsers.
 		h.Set("X-Frame-Options", "DENY")
 
-		// Do not leak our URLs -- which contain tenant slugs, and in the reset flow a
+		// Do not leak our URLs -- which contain organization slugs, and in the reset flow a
 		// TOKEN -- to whatever site the user clicks through to next.
 		h.Set("Referrer-Policy", "no-referrer")
 

@@ -12,16 +12,16 @@ import (
 	"github.com/miguelrosalesmtl/go-template/internal/settings"
 )
 
-// gatedService is a Service with the email-verification gate and the tenant cap
-// turned ON. The other tests turn both off, because they create tenants constantly
+// gatedService is a Service with the email-verification gate and the organization cap
+// turned ON. The other tests turn both off, because they create organizations constantly
 // and are not testing these rules.
-func gatedService(t *testing.T, maxTenants int) *Service {
+func gatedService(t *testing.T, maxOrganizations int) *Service {
 	t.Helper()
 
 	newTestService(t) // cleans the database; we build our own service below
 	cfg := testAuthSettings()
 	cfg.RequireVerifiedEmail = true
-	cfg.MaxTenantsPerUser = maxTenants
+	cfg.MaxOrganizationsPerUser = maxOrganizations
 
 	return NewService(
 		testPool, cfg,
@@ -44,9 +44,9 @@ func TestEmailVerification(t *testing.T) {
 		t.Fatal("a freshly registered user is already verified")
 	}
 
-	// Verification gates TENANT CREATION, not login. Locking somebody out of their
+	// Verification gates ORGANIZATION CREATION, not login. Locking somebody out of their
 	// own account because a mail went to spam is a support nightmare for very little
-	// gain; stopping an unverified address from standing up tenants is the control
+	// gain; stopping an unverified address from standing up organizations is the control
 	// that actually matters.
 	t.Run("an unverified user can still log in", func(t *testing.T) {
 		if _, _, err := svc.Login(ctx, "alice@example.com", goodPassword, RequestMeta{}); err != nil {
@@ -54,8 +54,8 @@ func TestEmailVerification(t *testing.T) {
 		}
 	})
 
-	t.Run("but cannot create a tenant", func(t *testing.T) {
-		if _, err := svc.CreateTenant(ctx, alice, "acme", "Acme"); !errors.Is(err, ErrEmailNotVerified) {
+	t.Run("but cannot create an organization", func(t *testing.T) {
+		if _, err := svc.CreateOrganization(ctx, alice, "acme", "Acme"); !errors.Is(err, ErrEmailNotVerified) {
 			t.Errorf("got %v, want ErrEmailNotVerified", err)
 		}
 	})
@@ -76,8 +76,8 @@ func TestEmailVerification(t *testing.T) {
 	}
 
 	t.Run("and now they can", func(t *testing.T) {
-		if _, err := svc.CreateTenant(ctx, verified, "acme", "Acme"); err != nil {
-			t.Errorf("a verified user cannot create a tenant: %v", err)
+		if _, err := svc.CreateOrganization(ctx, verified, "acme", "Acme"); err != nil {
+			t.Errorf("a verified user cannot create an organization: %v", err)
 		}
 	})
 
@@ -101,7 +101,7 @@ func TestAcceptingAnInvitationVerifiesTheAddress(t *testing.T) {
 	svc := gatedService(t, 0)
 	ctx := context.Background()
 
-	// A verified owner, so she can create the tenant at all.
+	// A verified owner, so she can create the organization at all.
 	alice, err := svc.Register(ctx, "alice@example.com", goodPassword, "Alice")
 	if err != nil {
 		t.Fatalf("register alice: %v", err)
@@ -110,9 +110,9 @@ func TestAcceptingAnInvitationVerifiesTheAddress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("verify alice: %v", err)
 	}
-	acme, err := svc.CreateTenant(ctx, alice, "acme", "Acme")
+	acme, err := svc.CreateOrganization(ctx, alice, "acme", "Acme")
 	if err != nil {
-		t.Fatalf("create tenant: %v", err)
+		t.Fatalf("create organization: %v", err)
 	}
 
 	// Carol registers and does NOT click her verification link.
@@ -146,7 +146,7 @@ func TestAcceptingAnInvitationVerifiesTheAddress(t *testing.T) {
 	}
 }
 
-func TestTenantCap(t *testing.T) {
+func TestOrganizationCap(t *testing.T) {
 	svc := gatedService(t, 2)
 	ctx := context.Background()
 
@@ -160,24 +160,24 @@ func TestTenantCap(t *testing.T) {
 	}
 
 	for _, slug := range []string{"one", "two"} {
-		if _, err := svc.CreateTenant(ctx, alice, slug, slug); err != nil {
+		if _, err := svc.CreateOrganization(ctx, alice, slug, slug); err != nil {
 			t.Fatalf("create %s: %v", slug, err)
 		}
 	}
 
-	// Without a cap, one account stands up unlimited tenants: free storage for an
+	// Without a cap, one account stands up unlimited organizations: free storage for an
 	// abuser, a bill for you.
-	if _, err := svc.CreateTenant(ctx, alice, "three", "Three"); !errors.Is(err, ErrTooManyTenants) {
-		t.Errorf("the cap did not hold: got %v, want ErrTooManyTenants", err)
+	if _, err := svc.CreateOrganization(ctx, alice, "three", "Three"); !errors.Is(err, ErrTooManyOrganizations) {
+		t.Errorf("the cap did not hold: got %v, want ErrTooManyOrganizations", err)
 	}
 
-	// Deleting one frees a slot -- the cap counts LIVE tenants.
+	// Deleting one frees a slot -- the cap counts LIVE organizations.
 	t.Run("soft-deleting one frees a slot", func(t *testing.T) {
 		access := accessFor(t, svc, alice, "one")
-		if err := svc.DeleteTenant(ctx, alice, access); err != nil {
+		if err := svc.DeleteOrganization(ctx, alice, access); err != nil {
 			t.Fatalf("delete: %v", err)
 		}
-		if _, err := svc.CreateTenant(ctx, alice, "three", "Three"); err != nil {
+		if _, err := svc.CreateOrganization(ctx, alice, "three", "Three"); err != nil {
 			t.Errorf("a slot did not free up after a deletion: %v", err)
 		}
 	})
@@ -246,60 +246,60 @@ func TestRevokeOneSession(t *testing.T) {
 	})
 }
 
-func TestPurgeDestroysSoftDeletedTenants(t *testing.T) {
+func TestPurgeDestroysSoftDeletedOrganizations(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
-	acme, alice := setupTenantWithOwner(t, svc)
-	if err := svc.DeleteTenant(ctx, alice, accessFor(t, svc, alice, acme.Slug)); err != nil {
+	acme, alice := setupOrganizationWithOwner(t, svc)
+	if err := svc.DeleteOrganization(ctx, alice, accessFor(t, svc, alice, acme.Slug)); err != nil {
 		t.Fatalf("soft delete: %v", err)
 	}
 
 	// Nothing is destroyed yet -- that is the whole meaning of "soft".
 	var n int
-	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM tenants WHERE id = $1`, acme.ID).Scan(&n); err != nil {
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM organizations WHERE id = $1`, acme.ID).Scan(&n); err != nil {
 		t.Fatalf("count: %v", err)
 	}
 	if n != 1 {
-		t.Fatal("a soft-deleted tenant was already destroyed")
+		t.Fatal("a soft-deleted organization was already destroyed")
 	}
 
 	t.Run("a zero retention destroys nothing", func(t *testing.T) {
 		// The default. Silently shredding a customer's data because a config value
 		// had a tidy default is not a decision this template makes.
-		purged, err := svc.PurgeDeletedTenants(ctx, 0)
+		purged, err := svc.PurgeDeletedOrganizations(ctx, 0)
 		if err != nil {
 			t.Fatalf("purge: %v", err)
 		}
 		if purged != 0 {
-			t.Errorf("a zero retention destroyed %d tenants; it must destroy none", purged)
+			t.Errorf("a zero retention destroyed %d organizations; it must destroy none", purged)
 		}
 	})
 
 	t.Run("past the retention it is destroyed for real", func(t *testing.T) {
-		purged, err := svc.PurgeDeletedTenants(ctx, 1*time.Nanosecond)
+		purged, err := svc.PurgeDeletedOrganizations(ctx, 1*time.Nanosecond)
 		if err != nil {
 			t.Fatalf("purge: %v", err)
 		}
 		if purged != 1 {
-			t.Fatalf("purged %d tenants, want 1", purged)
+			t.Fatalf("purged %d organizations, want 1", purged)
 		}
 
-		if err := testPool.QueryRow(ctx, `SELECT count(*) FROM tenants WHERE id = $1`, acme.ID).Scan(&n); err != nil {
+		if err := testPool.QueryRow(ctx, `SELECT count(*) FROM organizations WHERE id = $1`, acme.ID).Scan(&n); err != nil {
 			t.Fatalf("count: %v", err)
 		}
 		if n != 0 {
-			t.Error("the tenant survived the purge")
+			t.Error("the organization survived the purge")
 		}
 
 		// And the cascade took its memberships with it -- this IS the right-to-erasure
-		// path, so a half-deleted tenant would be a failure of the whole point.
+		// path, so a half-deleted organization would be a failure of the whole point.
 		if err := testPool.QueryRow(ctx,
-			`SELECT count(*) FROM memberships WHERE tenant_id = $1`, acme.ID).Scan(&n); err != nil {
+			`SELECT count(*) FROM memberships WHERE organization_id = $1`, acme.ID).Scan(&n); err != nil {
 			t.Fatalf("count memberships: %v", err)
 		}
 		if n != 0 {
-			t.Errorf("%d memberships survived the purge of their tenant", n)
+			t.Errorf("%d memberships survived the purge of their organization", n)
 		}
 	})
 }

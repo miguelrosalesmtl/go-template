@@ -16,11 +16,11 @@ import "fmt"
 //     log aggregator.
 
 // Invitation builds the "you have been invited" email.
-func Invitation(baseURL, tenantName, inviterEmail, token string) Message {
+func Invitation(baseURL, organizationName, inviterEmail, token string) Message {
 	link := fmt.Sprintf("%s/invitations/accept?token=%s", baseURL, token)
 
 	return Message{
-		Subject: fmt.Sprintf("You have been invited to join %s", tenantName),
+		Subject: fmt.Sprintf("You have been invited to join %s", organizationName),
 		Body: fmt.Sprintf(`%s has invited you to join %s.
 
 Accept the invitation:
@@ -31,7 +31,7 @@ If you do not have an account yet, you will be asked to create one first --
 use this same email address, or the invitation will not match.
 
 If you were not expecting this, you can ignore it. The link expires on its own.
-`, inviterEmail, tenantName, link),
+`, inviterEmail, organizationName, link),
 	}
 }
 
@@ -63,7 +63,7 @@ changed, and it will not change unless somebody uses the link above.
 
 // EmailVerification builds the "confirm your address" email.
 //
-// This one has to actually arrive, because the account cannot create a tenant
+// This one has to actually arrive, because the account cannot create an organization
 // until it does -- so keep the wording plain and the link obvious. Resist the urge
 // to make it pretty; deliverability beats design for the one email that gates
 // onboarding.

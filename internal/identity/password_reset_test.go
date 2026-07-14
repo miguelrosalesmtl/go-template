@@ -189,7 +189,7 @@ func TestInvitationTokenIsEmailedNotReturned(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
-	acme, alice := setupTenantWithOwner(t, svc)
+	acme, alice := setupOrganizationWithOwner(t, svc)
 	aAccess := accessFor(t, svc, alice, acme.Slug)
 	memberID := systemRoleID(t, svc, acme.ID, RoleKeyMember)
 
@@ -207,7 +207,7 @@ func TestInvitationTokenIsEmailedNotReturned(t *testing.T) {
 
 	msg := testMailer.lastTo(t, "carol@example.com")
 	if !strings.Contains(msg.Subject, acme.Name) {
-		t.Errorf("the invitation subject does not name the tenant: %q", msg.Subject)
+		t.Errorf("the invitation subject does not name the organization: %q", msg.Subject)
 	}
 	if !strings.Contains(msg.Body, alice.Email) {
 		t.Errorf("the invitation body does not say who invited them: %q", msg.Body)

@@ -130,93 +130,93 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": views})
 }
 
-// ---------------------------------------------------------------- tenants
+// ---------------------------------------------------------------- organizations
 
-func (s *Server) handleListTenants(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleListOrganizations(w http.ResponseWriter, r *http.Request) {
 	user := userFrom(r.Context())
 
-	tenants, err := s.identity.ListTenants(r.Context(), user.ID)
+	organizations, err := s.identity.ListOrganizations(r.Context(), user.ID)
 	if err != nil {
 		s.errors.handle(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"tenants": tenants})
+	writeJSON(w, http.StatusOK, map[string]any{"organizations": organizations})
 }
 
-type createTenantRequest struct {
+type createOrganizationRequest struct {
 	Slug string `json:"slug"`
 	Name string `json:"name"`
 }
 
-// handleCreateTenant creates a tenant with the caller as its owner.
-func (s *Server) handleCreateTenant(w http.ResponseWriter, r *http.Request) {
-	var req createTenantRequest
+// handleCreateOrganization creates an organization with the caller as its owner.
+func (s *Server) handleCreateOrganization(w http.ResponseWriter, r *http.Request) {
+	var req createOrganizationRequest
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
 
-	tenant, err := s.identity.CreateTenant(r.Context(), userFrom(r.Context()), req.Slug, req.Name)
+	organization, err := s.identity.CreateOrganization(r.Context(), userFrom(r.Context()), req.Slug, req.Name)
 	if err != nil {
 		s.errors.handle(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, tenant)
+	writeJSON(w, http.StatusCreated, organization)
 }
 
-// handleGetTenant returns the tenant in the path along with the caller's
-// authority in it. requireTenant has already established that authority, so
+// handleGetOrganization returns the organization in the path along with the caller's
+// authority in it. requireOrganization has already established that authority, so
 // there is nothing left to check here.
 //
-// It returns the whole TenantAccess, not just the tenant and roles, so that
+// It returns the whole OrganizationAccess, not just the organization and roles, so that
 // permissions and via_superuser reach the client. A UI needs the permission set to
 // decide which buttons to show, and should use via_superuser to display a
 // conspicuous "you are here as an operator, not a member" banner -- an operator who
 // forgets which hat they are wearing is how accidents happen.
-func (s *Server) handleGetTenant(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleGetOrganization(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, accessFrom(r.Context()))
 }
 
-type updateTenantRequest struct {
+type updateOrganizationRequest struct {
 	Name string `json:"name"`
 }
 
-// handleUpdateTenant renames the tenant.
+// handleUpdateOrganization renames the organization.
 //
 // The NAME is the only thing that can change. A body containing "slug" is rejected
 // with a 400 by decodeJSON's DisallowUnknownFields -- the slug is an identifier
 // living in every URL, bookmark, saved API call, and webhook config your customers
 // have, and quietly changing it would break all of them. The name is the label,
 // and the label is what people actually want to fix.
-func (s *Server) handleUpdateTenant(w http.ResponseWriter, r *http.Request) {
-	var req updateTenantRequest
+func (s *Server) handleUpdateOrganization(w http.ResponseWriter, r *http.Request) {
+	var req updateOrganizationRequest
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest,
-			"invalid JSON body (note: the tenant slug is immutable; only the name can be changed)")
+			"invalid JSON body (note: the organization slug is immutable; only the name can be changed)")
 		return
 	}
 
 	ctx := r.Context()
-	tenant, err := s.identity.UpdateTenant(ctx, userFrom(ctx), accessFrom(ctx), req.Name)
+	organization, err := s.identity.UpdateOrganization(ctx, userFrom(ctx), accessFrom(ctx), req.Name)
 	if err != nil {
 		s.errors.handle(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, tenant)
+	writeJSON(w, http.StatusOK, organization)
 }
 
-// handleDeleteTenant soft-deletes the tenant. Requires tenant.delete, which only
+// handleDeleteOrganization soft-deletes the organization. Requires organization.delete, which only
 // the owner role carries.
 //
-// The tenant becomes invisible to EVERYONE immediately -- including the owner who
-// just deleted it, who will find it gone from their tenant list and 404 on its
+// The organization becomes invisible to EVERYONE immediately -- including the owner who
+// just deleted it, who will find it gone from their organization list and 404 on its
 // URL. Nothing is destroyed; a superuser can restore it whole. The slug is released
 // for anyone else to claim, which is the one thing a restore may not be able to
 // undo.
-func (s *Server) handleDeleteTenant(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleDeleteOrganization(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	if err := s.identity.DeleteTenant(ctx, userFrom(ctx), accessFrom(ctx)); err != nil {
+	if err := s.identity.DeleteOrganization(ctx, userFrom(ctx), accessFrom(ctx)); err != nil {
 		s.errors.handle(w, r, err)
 		return
 	}
@@ -226,7 +226,7 @@ func (s *Server) handleDeleteTenant(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------- members
 
 func (s *Server) handleListMembers(w http.ResponseWriter, r *http.Request) {
-	members, err := s.identity.ListMembers(r.Context(), tenantFrom(r.Context()).ID)
+	members, err := s.identity.ListMembers(r.Context(), organizationFrom(r.Context()).ID)
 	if err != nil {
 		s.errors.handle(w, r, err)
 		return
@@ -252,13 +252,13 @@ func (s *Server) handleRemoveMember(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleLeaveTenant removes the caller from the tenant.
+// handleLeaveOrganization removes the caller from the organization.
 //
 // It needs no permission -- any member may walk out, and requiring members.remove
-// to leave would trap a plain member in a tenant forever. The last-owner rule
+// to leave would trap a plain member in an organization forever. The last-owner rule
 // still applies, so the sole owner gets a 409 telling them to appoint a successor
 // first.
-func (s *Server) handleLeaveTenant(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleLeaveOrganization(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	user := userFrom(ctx)
 
@@ -274,7 +274,7 @@ func (s *Server) handleLeaveTenant(w http.ResponseWriter, r *http.Request) {
 type createInvitationRequest struct {
 	Email string `json:"email"`
 	// RoleID is the role the invitee will hold on joining. It must be a role this
-	// tenant can see -- a system role, or one of its own -- and the caller must
+	// organization can see -- a system role, or one of its own -- and the caller must
 	// hold every permission it carries. Both are enforced in the service.
 	RoleID uuid.UUID `json:"role_id"`
 }
@@ -312,7 +312,7 @@ func (s *Server) handleCreateInvitation(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleListInvitations(w http.ResponseWriter, r *http.Request) {
-	invitations, err := s.identity.ListInvitations(r.Context(), tenantFrom(r.Context()).ID)
+	invitations, err := s.identity.ListInvitations(r.Context(), organizationFrom(r.Context()).ID)
 	if err != nil {
 		s.errors.handle(w, r, err)
 		return
@@ -328,7 +328,7 @@ func (s *Server) handleRevokeInvitation(w http.ResponseWriter, r *http.Request) 
 	}
 
 	ctx := r.Context()
-	if err := s.identity.RevokeInvitation(ctx, userFrom(ctx), tenantFrom(ctx), invitationID); err != nil {
+	if err := s.identity.RevokeInvitation(ctx, userFrom(ctx), organizationFrom(ctx), invitationID); err != nil {
 		s.errors.handle(w, r, err)
 		return
 	}
@@ -339,10 +339,10 @@ type acceptInvitationRequest struct {
 	Token string `json:"token"`
 }
 
-// handleAcceptInvitation joins the caller to the tenant that invited them.
+// handleAcceptInvitation joins the caller to the organization that invited them.
 //
-// It sits outside /tenants/{tenant} on purpose: the caller is not a member yet,
-// so requireTenant would 404 them before they ever got here. The tenant comes
+// It sits outside /organizations/{organization} on purpose: the caller is not a member yet,
+// so requireOrganization would 404 them before they ever got here. The organization comes
 // from the invitation token, not from the URL.
 func (s *Server) handleAcceptInvitation(w http.ResponseWriter, r *http.Request) {
 	var req acceptInvitationRequest
@@ -351,12 +351,12 @@ func (s *Server) handleAcceptInvitation(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	tenant, err := s.identity.AcceptInvitation(r.Context(), userFrom(r.Context()), req.Token)
+	organization, err := s.identity.AcceptInvitation(r.Context(), userFrom(r.Context()), req.Token)
 	if err != nil {
 		s.errors.handle(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, tenant)
+	writeJSON(w, http.StatusOK, organization)
 }
 
 // ---------------------------------------------------------------- audit
@@ -364,7 +364,7 @@ func (s *Server) handleAcceptInvitation(w http.ResponseWriter, r *http.Request) 
 // auditPageSize is how many entries one page of the audit log holds.
 const auditPageSize = 50
 
-// handleListAuditLog returns the tenant's activity, newest first, with filters.
+// handleListAuditLog returns the organization's activity, newest first, with filters.
 //
 //	?action=roles.created     one exact action
 //	?actor=<user uuid>        everything one person did
@@ -419,7 +419,7 @@ func (s *Server) handleListAuditLog(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	entries, err := audit.NewRecorder(s.pool).List(r.Context(), tenantFrom(r.Context()).ID, filter)
+	entries, err := audit.NewRecorder(s.pool).List(r.Context(), organizationFrom(r.Context()).ID, filter)
 	if err != nil {
 		s.errors.handle(w, r, err)
 		return

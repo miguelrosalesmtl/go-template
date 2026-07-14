@@ -8,17 +8,17 @@ import (
 	"github.com/google/uuid"
 )
 
-// This file is the reason the template chose application-level tenant scoping
-// over Postgres row-level security: with RLS, the database refuses cross-tenant
+// This file is the reason the template chose application-level organization scoping
+// over Postgres row-level security: with RLS, the database refuses cross-organization
 // rows and these tests would be redundant. Without it, one forgotten WHERE
 // clause is a data breach, and THESE TESTS ARE THE THING THAT CATCHES IT.
 //
-// When you add a tenant-owned resource of your own, add its isolation test here
+// When you add an organization-owned resource of your own, add its isolation test here
 // too. It is the cheapest insurance in the codebase.
 
-// setupTwoTenants builds the standard fixture: two unrelated tenants, each with
+// setupTwoOrganizations builds the standard fixture: two unrelated organizations, each with
 // an owner who has no membership in the other.
-func setupTwoTenants(t *testing.T, svc *Service) (acme, globex Tenant, alice, bob User) {
+func setupTwoOrganizations(t *testing.T, svc *Service) (acme, globex Organization, alice, bob User) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -31,62 +31,62 @@ func setupTwoTenants(t *testing.T, svc *Service) (acme, globex Tenant, alice, bo
 		t.Fatalf("register bob: %v", err)
 	}
 
-	acme, err = svc.CreateTenant(ctx, alice, "acme", "Acme Inc")
+	acme, err = svc.CreateOrganization(ctx, alice, "acme", "Acme Inc")
 	if err != nil {
 		t.Fatalf("create acme: %v", err)
 	}
-	globex, err = svc.CreateTenant(ctx, bob, "globex", "Globex Corp")
+	globex, err = svc.CreateOrganization(ctx, bob, "globex", "Globex Corp")
 	if err != nil {
 		t.Fatalf("create globex: %v", err)
 	}
 	return acme, globex, alice, bob
 }
 
-// The headline test: a member of one tenant must not be able to reach another,
+// The headline test: a member of one organization must not be able to reach another,
 // even knowing its slug and its ID.
-func TestTenantIsolation(t *testing.T) {
+func TestOrganizationIsolation(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
-	acme, globex, alice, bob := setupTwoTenants(t, svc)
+	acme, globex, alice, bob := setupTwoOrganizations(t, svc)
 
-	t.Run("cannot resolve a tenant they do not belong to", func(t *testing.T) {
+	t.Run("cannot resolve an organization they do not belong to", func(t *testing.T) {
 		// Alice knows Globex exists -- she can read the slug off a URL. Resolving
 		// it must still fail, and must fail as "not found" rather than
-		// "forbidden": a 403 would confirm the tenant exists, letting anyone
+		// "forbidden": a 403 would confirm the organization exists, letting anyone
 		// enumerate the customer list one slug at a time.
-		if _, err := svc.ResolveTenant(ctx, alice, "globex"); !errors.Is(err, ErrNotFound) {
+		if _, err := svc.ResolveOrganization(ctx, alice, "globex"); !errors.Is(err, ErrNotFound) {
 			t.Errorf("alice resolving globex: got %v, want ErrNotFound", err)
 		}
-		if _, err := svc.ResolveTenant(ctx, bob, "acme"); !errors.Is(err, ErrNotFound) {
+		if _, err := svc.ResolveOrganization(ctx, bob, "acme"); !errors.Is(err, ErrNotFound) {
 			t.Errorf("bob resolving acme: got %v, want ErrNotFound", err)
 		}
 	})
 
-	t.Run("a tenant that does not exist is indistinguishable", func(t *testing.T) {
-		_, err := svc.ResolveTenant(ctx, alice, "no-such-tenant")
+	t.Run("an organization that does not exist is indistinguishable", func(t *testing.T) {
+		_, err := svc.ResolveOrganization(ctx, alice, "no-such-organization")
 		if !errors.Is(err, ErrNotFound) {
-			t.Errorf("resolving a nonexistent tenant: got %v, want ErrNotFound", err)
+			t.Errorf("resolving a nonexistent organization: got %v, want ErrNotFound", err)
 		}
 	})
 
-	t.Run("listing tenants shows only your own", func(t *testing.T) {
-		tenants, err := svc.ListTenants(ctx, alice.ID)
+	t.Run("listing organizations shows only your own", func(t *testing.T) {
+		organizations, err := svc.ListOrganizations(ctx, alice.ID)
 		if err != nil {
-			t.Fatalf("list tenants: %v", err)
+			t.Fatalf("list organizations: %v", err)
 		}
-		if len(tenants) != 1 {
-			t.Fatalf("alice belongs to %d tenants, want 1", len(tenants))
+		if len(organizations) != 1 {
+			t.Fatalf("alice belongs to %d organizations, want 1", len(organizations))
 		}
-		if tenants[0].Tenant.ID != acme.ID {
-			t.Errorf("alice's tenant is %s, want acme", tenants[0].Tenant.Slug)
+		if organizations[0].Organization.ID != acme.ID {
+			t.Errorf("alice's organization is %s, want acme", organizations[0].Organization.Slug)
 		}
-		if !hasOwnerRole(tenants[0].Roles) {
-			t.Errorf("the creator holds %v, want the owner role", roleKeys(tenants[0].Roles))
+		if !hasOwnerRole(organizations[0].Roles) {
+			t.Errorf("the creator holds %v, want the owner role", roleKeys(organizations[0].Roles))
 		}
 	})
 
-	t.Run("members of one tenant are invisible to another", func(t *testing.T) {
+	t.Run("members of one organization are invisible to another", func(t *testing.T) {
 		members, err := svc.ListMembers(ctx, globex.ID)
 		if err != nil {
 			t.Fatalf("list members: %v", err)
@@ -101,20 +101,20 @@ func TestTenantIsolation(t *testing.T) {
 		}
 	})
 
-	// The repository-level version of the same rule. ResolveTenant is the gate an
+	// The repository-level version of the same rule. ResolveOrganization is the gate an
 	// HTTP request passes through, but a future handler could call the repository
 	// directly -- so the WHERE clause itself has to be right, not just the gate
 	// in front of it.
-	t.Run("repository writes are scoped by tenant_id", func(t *testing.T) {
+	t.Run("repository writes are scoped by organization_id", func(t *testing.T) {
 		repo := NewRepository(testPool)
 
 		// Bob is an owner of Globex. An attacker who compromised an Acme admin
 		// should not be able to touch his Globex membership by passing Acme's
-		// tenant ID with Bob's user ID -- the tenant_id in the WHERE clause is
+		// organization ID with Bob's user ID -- the organization_id in the WHERE clause is
 		// what makes the row unreachable.
 		err := repo.DeleteMembership(ctx, acme.ID, bob.ID)
 		if !errors.Is(err, ErrNotFound) {
-			t.Errorf("deleting bob's membership via acme's tenant id: got %v, want ErrNotFound", err)
+			t.Errorf("deleting bob's membership via acme's organization id: got %v, want ErrNotFound", err)
 		}
 
 		// And Bob is still an owner of Globex, untouched.
@@ -127,11 +127,11 @@ func TestTenantIsolation(t *testing.T) {
 		}
 	})
 
-	// RBAC adds a new object that can leak across tenants: the ROLE. A custom role
-	// belongs to exactly one tenant, and its id is a guessable-shaped UUID that
+	// RBAC adds a new object that can leak across organizations: the ROLE. A custom role
+	// belongs to exactly one organization, and its id is a guessable-shaped UUID that
 	// might appear in a screenshot or a log. Assigning, editing, or inviting into
-	// another tenant's role must be impossible.
-	t.Run("a tenant cannot use another tenant's custom role", func(t *testing.T) {
+	// another organization's role must be impossible.
+	t.Run("an organization cannot use another organization's custom role", func(t *testing.T) {
 		bAccess := accessFor(t, svc, bob, globex.Slug)
 
 		// Globex builds a custom role. Acme must not be able to touch it.
@@ -144,12 +144,12 @@ func TestTenantIsolation(t *testing.T) {
 		aAccess := accessFor(t, svc, alice, acme.Slug)
 
 		// Alice is an OWNER of Acme -- she holds every permission, so the escalation
-		// guard cannot be what stops her. Only the tenant scoping can.
+		// guard cannot be what stops her. Only the organization scoping can.
 		if _, err := svc.GetRole(ctx, acme.ID, secret.ID); !errors.Is(err, ErrNotFound) {
 			t.Errorf("acme can read globex's role: got %v, want ErrNotFound", err)
 		}
 
-		carol := joinTenant(t, svc, alice, acme, "carol@example.com", RoleKeyMember)
+		carol := joinOrganization(t, svc, alice, acme, "carol@example.com", RoleKeyMember)
 		err = svc.SetMemberRoles(ctx, alice, aAccess, carol.ID, []uuid.UUID{secret.ID})
 		if !errors.Is(err, ErrNotFound) {
 			t.Errorf("acme assigned globex's role to its own member: got %v, want ErrNotFound", err)
@@ -161,7 +161,7 @@ func TestTenantIsolation(t *testing.T) {
 		}
 
 		if _, err := svc.UpdateRole(ctx, alice, aAccess, secret.ID, "Hijacked",
-			[]Permission{PermTenantRead}); !errors.Is(err, ErrNotFound) {
+			[]Permission{PermOrganizationRead}); !errors.Is(err, ErrNotFound) {
 			t.Errorf("acme edited globex's role: got %v, want ErrNotFound", err)
 		}
 		if err := svc.DeleteRole(ctx, alice, aAccess, secret.ID); !errors.Is(err, ErrNotFound) {
@@ -180,7 +180,7 @@ func TestTenantIsolation(t *testing.T) {
 		}
 	})
 
-	t.Run("an admin cannot revoke another tenant's invitation", func(t *testing.T) {
+	t.Run("an admin cannot revoke another organization's invitation", func(t *testing.T) {
 		// Bob invites someone to Globex.
 		bAccess := accessFor(t, svc, bob, globex.Slug)
 		memberID := systemRoleID(t, svc, globex.ID, RoleKeyMember)
@@ -206,18 +206,18 @@ func TestTenantIsolation(t *testing.T) {
 		}
 	})
 
-	t.Run("the audit log does not leak across tenants", func(t *testing.T) {
+	t.Run("the audit log does not leak across organizations", func(t *testing.T) {
 		entries := listAudit(t, acme.ID)
 		for _, e := range entries {
-			if e.TenantID == nil {
-				t.Fatal("a tenant-scoped audit entry has a nil tenant_id")
+			if e.OrganizationID == nil {
+				t.Fatal("an organization-scoped audit entry has a nil organization_id")
 			}
-			if *e.TenantID != acme.ID {
-				t.Fatalf("acme's audit log contains an entry for tenant %s", *e.TenantID)
+			if *e.OrganizationID != acme.ID {
+				t.Fatalf("acme's audit log contains an entry for organization %s", *e.OrganizationID)
 			}
 		}
 		if len(entries) == 0 {
-			t.Fatal("acme's audit log is empty; creating the tenant should have been recorded")
+			t.Fatal("acme's audit log is empty; creating the organization should have been recorded")
 		}
 	})
 }
@@ -225,12 +225,12 @@ func TestTenantIsolation(t *testing.T) {
 // An invitation is a bearer token, and bearer tokens leak: they get forwarded,
 // screenshotted, and left in inboxes. Binding the invitation to the invited
 // email is what stops a leaked link from becoming an account in someone else's
-// tenant.
+// organization.
 func TestInvitationCannotBeRedeemedByAnotherUser(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
-	acme, _, alice, bob := setupTwoTenants(t, svc)
+	acme, _, alice, bob := setupTwoOrganizations(t, svc)
 
 	// Alice invites Carol to Acme.
 	aAccess := accessFor(t, svc, alice, acme.Slug)
@@ -267,12 +267,12 @@ func TestInvitationCannotBeRedeemedByAnotherUser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("register carol: %v", err)
 	}
-	tenant, err := svc.AcceptInvitation(ctx, carol, token)
+	organization, err := svc.AcceptInvitation(ctx, carol, token)
 	if err != nil {
 		t.Fatalf("carol accepting her own invitation: %v", err)
 	}
-	if tenant.ID != acme.ID {
-		t.Errorf("carol joined tenant %s, want acme", tenant.Slug)
+	if organization.ID != acme.ID {
+		t.Errorf("carol joined organization %s, want acme", organization.Slug)
 	}
 
 	// And it cannot be replayed.
@@ -281,13 +281,13 @@ func TestInvitationCannotBeRedeemedByAnotherUser(t *testing.T) {
 	}
 }
 
-// listAudit reads a tenant's audit entries, bypassing the service (which has no
+// listAudit reads an organization's audit entries, bypassing the service (which has no
 // audit-read method of its own -- the handler uses audit.Recorder directly).
-func listAudit(t *testing.T, tenantID uuid.UUID) []auditRow {
+func listAudit(t *testing.T, organizationID uuid.UUID) []auditRow {
 	t.Helper()
 
 	rows, err := testPool.Query(context.Background(),
-		`SELECT id, tenant_id, action FROM audit_log WHERE tenant_id = $1`, tenantID)
+		`SELECT id, organization_id, action FROM audit_log WHERE organization_id = $1`, organizationID)
 	if err != nil {
 		t.Fatalf("query audit log: %v", err)
 	}
@@ -296,7 +296,7 @@ func listAudit(t *testing.T, tenantID uuid.UUID) []auditRow {
 	var out []auditRow
 	for rows.Next() {
 		var a auditRow
-		if err := rows.Scan(&a.ID, &a.TenantID, &a.Action); err != nil {
+		if err := rows.Scan(&a.ID, &a.OrganizationID, &a.Action); err != nil {
 			t.Fatalf("scan audit row: %v", err)
 		}
 		out = append(out, a)
@@ -308,7 +308,7 @@ func listAudit(t *testing.T, tenantID uuid.UUID) []auditRow {
 }
 
 type auditRow struct {
-	ID       uuid.UUID
-	TenantID *uuid.UUID
-	Action   string
+	ID             uuid.UUID
+	OrganizationID *uuid.UUID
+	Action         string
 }

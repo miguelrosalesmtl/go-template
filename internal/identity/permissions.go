@@ -33,22 +33,22 @@ type Permission string
 // queues.update / queues.delete -- a developer never invents a verb, and a
 // customer building a role never has to guess what a word like "manage" covers.
 //
-// Note what is NOT here: tenant.create, and users.create. Every permission in
-// this catalog is evaluated INSIDE a tenant -- requirePermission runs after
-// requireTenant, against the roles you hold there. Creating a tenant, or
+// Note what is NOT here: organization.create, and users.create. Every permission in
+// this catalog is evaluated INSIDE an organization -- requirePermission runs after
+// requireOrganization, against the roles you hold there. Creating an organization, or
 // registering, happens when you are not in one yet, so there is nothing to hold a
 // permission against. Those routes are guarded by authentication alone.
 const (
-	// Tenant. There is no tenant.create; see above.
-	PermTenantRead   Permission = "tenant.read"
-	PermTenantUpdate Permission = "tenant.update" // the name; the slug is immutable
-	PermTenantDelete Permission = "tenant.delete" // soft delete -- restorable by a superuser
+	// Organization. There is no organization.create; see above.
+	PermOrganizationRead   Permission = "organization.read"
+	PermOrganizationUpdate Permission = "organization.update" // the name; the slug is immutable
+	PermOrganizationDelete Permission = "organization.delete" // soft delete -- restorable by a superuser
 
 	// Members. A membership is created by accepting an invitation, not by an
 	// admin conjuring one, so there is no members.create.
 	PermMembersRead   Permission = "members.read"
 	PermMembersUpdate Permission = "members.update" // change which roles they hold
-	PermMembersDelete Permission = "members.delete" // remove them from the tenant
+	PermMembersDelete Permission = "members.delete" // remove them from the organization
 
 	// Invitations. "Inviting somebody" is creating an invitation, and revoking one
 	// is deleting it -- naming them so makes them ordinary.
@@ -82,24 +82,24 @@ type CatalogEntry struct {
 // is the intended failure: loud, at the point of use, rather than a permission
 // that silently does nothing.
 var Catalog = []CatalogEntry{
-	{PermTenantRead, "View the tenant and its settings"},
-	{PermTenantUpdate, "Rename the tenant"},
-	{PermTenantDelete, "Delete the tenant"},
+	{PermOrganizationRead, "View the organization and its settings"},
+	{PermOrganizationUpdate, "Rename the organization"},
+	{PermOrganizationDelete, "Delete the organization"},
 
-	{PermMembersRead, "View the tenant's members"},
+	{PermMembersRead, "View the organization's members"},
 	{PermMembersUpdate, "Change which roles a member holds"},
-	{PermMembersDelete, "Remove members from the tenant"},
+	{PermMembersDelete, "Remove members from the organization"},
 
 	{PermInvitationsRead, "View pending invitations"},
-	{PermInvitationsCreate, "Invite people to the tenant"},
+	{PermInvitationsCreate, "Invite people to the organization"},
 	{PermInvitationsDelete, "Revoke a pending invitation"},
 
-	{PermRolesRead, "View the tenant's roles"},
+	{PermRolesRead, "View the organization's roles"},
 	{PermRolesCreate, "Create custom roles"},
 	{PermRolesUpdate, "Edit custom roles"},
 	{PermRolesDelete, "Delete custom roles"},
 
-	{PermAuditRead, "Read the tenant's audit log"},
+	{PermAuditRead, "Read the organization's audit log"},
 }
 
 // Valid reports whether p is a permission this application actually enforces.
@@ -109,7 +109,7 @@ func (p Permission) Valid() bool {
 	return slices.ContainsFunc(Catalog, func(e CatalogEntry) bool { return e.Key == p })
 }
 
-// PermissionSet is what a caller may do inside one tenant: the union of the
+// PermissionSet is what a caller may do inside one organization: the union of the
 // permissions granted by every role they hold there.
 //
 // It is a set, not a ladder. The old model ranked owner > admin > member and
@@ -128,7 +128,7 @@ func NewPermissionSet(perms ...Permission) PermissionSet {
 }
 
 // AllPermissions returns a set containing everything in the catalog. This is what
-// a superuser holds in every tenant.
+// a superuser holds in every organization.
 func AllPermissions() PermissionSet {
 	set := make(PermissionSet, len(Catalog))
 	for _, e := range Catalog {
@@ -151,7 +151,7 @@ func (s PermissionSet) Has(p Permission) bool {
 // own permission set is a superset of the permissions being handed out.
 //
 // Without it, RBAC is self-defeating: an admin holding roles.manage would simply
-// create a role carrying tenant.delete, assign it to themselves, and have escaped
+// create a role carrying organization.delete, assign it to themselves, and have escaped
 // every limit you placed on them. The same one rule also stops them assigning the
 // system "owner" role, since owner carries permissions they do not hold -- no
 // special-casing required.

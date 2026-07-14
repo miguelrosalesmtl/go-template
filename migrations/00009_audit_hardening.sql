@@ -16,12 +16,12 @@ ALTER TABLE audit_log ADD COLUMN user_agent text NOT NULL DEFAULT '';
 -- Pagination alone is useless at 100k rows: "did anyone touch roles last March"
 -- is not a question you can answer by scrolling. These serve the filters on
 -- GET /audit.
-CREATE INDEX audit_log_tenant_action_idx ON audit_log (tenant_id, action, id DESC);
-CREATE INDEX audit_log_tenant_actor_idx  ON audit_log (tenant_id, actor_user_id, id DESC);
+CREATE INDEX audit_log_organization_action_idx ON audit_log (organization_id, action, id DESC);
+CREATE INDEX audit_log_organization_actor_idx  ON audit_log (organization_id, actor_user_id, id DESC);
 
--- Denials are recorded with no tenant when there is none to record (a failed
--- login has not identified a tenant yet). This index is what makes them findable.
-CREATE INDEX audit_log_global_idx ON audit_log (id DESC) WHERE tenant_id IS NULL;
+-- Denials are recorded with no organization when there is none to record (a failed
+-- login has not identified an organization yet). This index is what makes them findable.
+CREATE INDEX audit_log_global_idx ON audit_log (id DESC) WHERE organization_id IS NULL;
 
 -- 3. APPEND-ONLY -- AND BE CLEAR ABOUT WHAT THAT DOES AND DOES NOT BUY YOU.
 --
@@ -68,7 +68,7 @@ BEGIN
         IF OLD.actor_user_id IS NOT NULL
            AND NEW.actor_user_id IS NULL
            AND NEW.id          =              OLD.id
-           AND NEW.tenant_id   IS NOT DISTINCT FROM OLD.tenant_id
+           AND NEW.organization_id   IS NOT DISTINCT FROM OLD.organization_id
            AND NEW.action      =              OLD.action
            AND NEW.target_type =              OLD.target_type
            AND NEW.target_id   =              OLD.target_id
@@ -89,9 +89,9 @@ BEGIN
     -- itself by setting this GUC for the duration of its transaction:
     --
     --   * the retention sweep (`server purge`), and
-    --   * a hard delete of a tenant, which cascades into its entries.
+    --   * a hard delete of an organization, which cascades into its entries.
     --
-    -- Note the consequence, and it is intended: hard-deleting a tenant takes its
+    -- Note the consequence, and it is intended: hard-deleting an organization takes its
     -- audit trail with it. The APPLICATION never does this -- it soft-deletes,
     -- which destroys nothing. A hard delete is an out-of-band act and has to look
     -- like one.
@@ -143,8 +143,8 @@ DROP TRIGGER audit_log_append_only ON audit_log;
 DROP FUNCTION audit_log_is_append_only();
 
 DROP INDEX audit_log_global_idx;
-DROP INDEX audit_log_tenant_actor_idx;
-DROP INDEX audit_log_tenant_action_idx;
+DROP INDEX audit_log_organization_actor_idx;
+DROP INDEX audit_log_organization_action_idx;
 
 ALTER TABLE audit_log DROP COLUMN user_agent;
 ALTER TABLE audit_log DROP COLUMN ip_address;

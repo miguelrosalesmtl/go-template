@@ -18,7 +18,7 @@ import (
 //
 // A role editor is, by construction, a machine for handing out permissions. Give
 // an admin roles.manage without a guard and they will simply build a role holding
-// tenant.delete, assign it to themselves, and walk out through every limit you
+// organization.delete, assign it to themselves, and walk out through every limit you
 // placed on them. The guard is checkEscalation, and it is called on every path
 // that can move a permission from one person to another.
 
@@ -26,24 +26,24 @@ import (
 // and configuration, so it is deliberately boring.
 var roleKeyPattern = regexp.MustCompile(`^[a-z0-9]+(?:_[a-z0-9]+)*$`)
 
-// ListRoles returns the roles the tenant can use: the three system roles plus its
+// ListRoles returns the roles the organization can use: the three system roles plus its
 // own custom ones.
-func (s *Service) ListRoles(ctx context.Context, tenantID uuid.UUID) ([]Role, error) {
-	return s.repo.ListRoles(ctx, tenantID)
+func (s *Service) ListRoles(ctx context.Context, organizationID uuid.UUID) ([]Role, error) {
+	return s.repo.ListRoles(ctx, organizationID)
 }
 
-// GetRole returns one role the tenant can see.
-func (s *Service) GetRole(ctx context.Context, tenantID, roleID uuid.UUID) (Role, error) {
-	return s.repo.GetRole(ctx, tenantID, roleID)
+// GetRole returns one role the organization can see.
+func (s *Service) GetRole(ctx context.Context, organizationID, roleID uuid.UUID) (Role, error) {
+	return s.repo.GetRole(ctx, organizationID, roleID)
 }
 
-// CreateRole builds a new custom role for the tenant.
+// CreateRole builds a new custom role for the organization.
 //
 // The caller needs roles.manage AND must already hold every permission they are
 // putting into the new role. The second condition is the whole ballgame -- without
 // it, roles.manage would be a synonym for "may become an owner".
 func (s *Service) CreateRole(
-	ctx context.Context, actor User, access TenantAccess, key, name string, perms []Permission,
+	ctx context.Context, actor User, access OrganizationAccess, key, name string, perms []Permission,
 ) (Role, error) {
 	key, name, set, err := s.validateRoleInput(key, name, perms)
 	if err != nil {
@@ -57,26 +57,26 @@ func (s *Service) CreateRole(
 	err = database.InTx(ctx, s.pool, func(db database.DB) error {
 		repo := NewRepository(db)
 
-		// A custom role may not shadow a system role's key: every tenant already
+		// A custom role may not shadow a system role's key: every organization already
 		// has "owner", "admin", and "member", and two roles answering to the same
 		// key would make "which role is this?" ambiguous.
-		if _, err := repo.GetRoleByKey(ctx, access.Tenant.ID, key); err == nil {
+		if _, err := repo.GetRoleByKey(ctx, access.Organization.ID, key); err == nil {
 			return ErrRoleKeyTaken
 		} else if !isNotFound(err) {
 			return err
 		}
 
-		role, err = repo.CreateRole(ctx, access.Tenant.ID, key, name, set)
+		role, err = repo.CreateRole(ctx, access.Organization.ID, key, name, set)
 		if err != nil {
 			return err
 		}
 
 		return audit.NewRecorder(db).Record(ctx, audit.Event{
-			TenantID:    &access.Tenant.ID,
-			ActorUserID: &actor.ID,
-			Action:      audit.ActionRoleCreated,
-			TargetType:  "role",
-			TargetID:    role.ID.String(),
+			OrganizationID: &access.Organization.ID,
+			ActorUserID:    &actor.ID,
+			Action:         audit.ActionRoleCreated,
+			TargetType:     "role",
+			TargetID:       role.ID.String(),
 			Metadata: map[string]any{
 				"key":         key,
 				"name":        name,
@@ -93,12 +93,12 @@ func (s *Service) CreateRole(
 // UpdateRole renames a custom role and replaces its permissions wholesale.
 //
 // Two refusals matter here. A system role cannot be touched at all -- otherwise a
-// tenant could strip every permission from "owner" and lock itself out forever.
+// organization could strip every permission from "owner" and lock itself out forever.
 // And the caller cannot put a permission into the role that they do not hold
 // themselves, which is the same escalation guard as CreateRole: editing an
 // existing role would otherwise be the trivial way around it.
 func (s *Service) UpdateRole(
-	ctx context.Context, actor User, access TenantAccess, roleID uuid.UUID, name string, perms []Permission,
+	ctx context.Context, actor User, access OrganizationAccess, roleID uuid.UUID, name string, perms []Permission,
 ) (Role, error) {
 	_, name, set, err := s.validateRoleInput("placeholder", name, perms)
 	if err != nil {
@@ -112,7 +112,7 @@ func (s *Service) UpdateRole(
 	err = database.InTx(ctx, s.pool, func(db database.DB) error {
 		repo := NewRepository(db)
 
-		existing, err := repo.GetRole(ctx, access.Tenant.ID, roleID)
+		existing, err := repo.GetRole(ctx, access.Organization.ID, roleID)
 		if err != nil {
 			return err
 		}
@@ -128,17 +128,17 @@ func (s *Service) UpdateRole(
 			return err
 		}
 
-		role, err = repo.UpdateRole(ctx, access.Tenant.ID, roleID, name, set)
+		role, err = repo.UpdateRole(ctx, access.Organization.ID, roleID, name, set)
 		if err != nil {
 			return err
 		}
 
 		return audit.NewRecorder(db).Record(ctx, audit.Event{
-			TenantID:    &access.Tenant.ID,
-			ActorUserID: &actor.ID,
-			Action:      audit.ActionRoleUpdated,
-			TargetType:  "role",
-			TargetID:    role.ID.String(),
+			OrganizationID: &access.Organization.ID,
+			ActorUserID:    &actor.ID,
+			Action:         audit.ActionRoleUpdated,
+			TargetType:     "role",
+			TargetID:       role.ID.String(),
 			Metadata: map[string]any{
 				"key":  role.Key,
 				"from": existing.Permissions.Slice(),
@@ -157,11 +157,11 @@ func (s *Service) UpdateRole(
 // It fails with ErrRoleInUse while anyone still holds the role. Reassign them
 // first: deleting a role should not silently strip somebody's access as an
 // invisible side effect of tidying up.
-func (s *Service) DeleteRole(ctx context.Context, actor User, access TenantAccess, roleID uuid.UUID) error {
+func (s *Service) DeleteRole(ctx context.Context, actor User, access OrganizationAccess, roleID uuid.UUID) error {
 	return database.InTx(ctx, s.pool, func(db database.DB) error {
 		repo := NewRepository(db)
 
-		existing, err := repo.GetRole(ctx, access.Tenant.ID, roleID)
+		existing, err := repo.GetRole(ctx, access.Organization.ID, roleID)
 		if err != nil {
 			return err
 		}
@@ -174,17 +174,17 @@ func (s *Service) DeleteRole(ctx context.Context, actor User, access TenantAcces
 			return err
 		}
 
-		if err := repo.DeleteRole(ctx, access.Tenant.ID, roleID); err != nil {
+		if err := repo.DeleteRole(ctx, access.Organization.ID, roleID); err != nil {
 			return err
 		}
 
 		return audit.NewRecorder(db).Record(ctx, audit.Event{
-			TenantID:    &access.Tenant.ID,
-			ActorUserID: &actor.ID,
-			Action:      audit.ActionRoleDeleted,
-			TargetType:  "role",
-			TargetID:    roleID.String(),
-			Metadata:    map[string]any{"key": existing.Key},
+			OrganizationID: &access.Organization.ID,
+			ActorUserID:    &actor.ID,
+			Action:         audit.ActionRoleDeleted,
+			TargetType:     "role",
+			TargetID:       roleID.String(),
+			Metadata:       map[string]any{"key": existing.Key},
 		})
 	})
 }
@@ -194,36 +194,36 @@ func (s *Service) DeleteRole(ctx context.Context, actor User, access TenantAcces
 // This is the other door authority can walk through, so it takes the same guard:
 // the caller must hold every permission carried by every role they are assigning.
 // That one rule also makes "only an owner may create an owner" fall out for free
-// -- the owner role carries tenant.delete, which an admin does not have, so an
+// -- the owner role carries organization.delete, which an admin does not have, so an
 // admin assigning it fails without any special case for owners anywhere.
 func (s *Service) SetMemberRoles(
-	ctx context.Context, actor User, access TenantAccess, targetUserID uuid.UUID, roleIDs []uuid.UUID,
+	ctx context.Context, actor User, access OrganizationAccess, targetUserID uuid.UUID, roleIDs []uuid.UUID,
 ) error {
 	if len(roleIDs) == 0 {
 		// A member holding no roles can see nothing and do nothing. That is not a
-		// state anyone means to create; they meant to remove them from the tenant.
+		// state anyone means to create; they meant to remove them from the organization.
 		return ErrNoRoles
 	}
 
 	return database.InTx(ctx, s.pool, func(db database.DB) error {
 		repo := NewRepository(db)
 
-		// Serialise membership changes for this tenant, so the owner count read
+		// Serialise membership changes for this organization, so the owner count read
 		// below cannot go stale between the check and the write.
-		if err := repo.LockTenant(ctx, access.Tenant.ID); err != nil {
+		if err := repo.LockOrganization(ctx, access.Organization.ID); err != nil {
 			return err
 		}
 
-		membership, err := repo.GetMembership(ctx, targetUserID, access.Tenant.ID)
+		membership, err := repo.GetMembership(ctx, targetUserID, access.Organization.ID)
 		if err != nil {
 			return err
 		}
 
-		// Resolving the ids through the tenant is what stops an admin of tenant A
-		// from assigning tenant B's role by id: GetRolesByIDs only sees system
-		// roles and this tenant's own, and returns ErrNotFound if any id is
+		// Resolving the ids through the organization is what stops an admin of organization A
+		// from assigning organization B's role by id: GetRolesByIDs only sees system
+		// roles and this organization's own, and returns ErrNotFound if any id is
 		// outside that set.
-		roles, err := repo.GetRolesByIDs(ctx, access.Tenant.ID, roleIDs)
+		roles, err := repo.GetRolesByIDs(ctx, access.Organization.ID, roleIDs)
 		if err != nil {
 			return err
 		}
@@ -233,7 +233,7 @@ func (s *Service) SetMemberRoles(
 			return err
 		}
 
-		before, err := repo.LoadMemberRoles(ctx, targetUserID, access.Tenant.ID)
+		before, err := repo.LoadMemberRoles(ctx, targetUserID, access.Organization.ID)
 		if err != nil {
 			return err
 		}
@@ -246,16 +246,16 @@ func (s *Service) SetMemberRoles(
 		// This is checked BEFORE the last-owner invariant below, and the order is
 		// deliberate: authorization first, invariants second. Otherwise an admin
 		// attempting the demotion would be told "that is the last owner" -- a fact
-		// about the tenant's composition that someone with no business acting here
+		// about the organization's composition that someone with no business acting here
 		// has no business learning.
 		if hasOwnerRole(before) && !access.ViaSuperuser && !actorHoldsOwner(access) {
 			return ErrForbidden
 		}
 
 		// Taking the owner role away from somebody who has it: refuse if they are
-		// the last owner, or the tenant becomes unadministrable by anyone.
+		// the last owner, or the organization becomes unadministrable by anyone.
 		if hasOwnerRole(before) && !hasOwnerRole(roles) {
-			owners, err := repo.CountOwners(ctx, access.Tenant.ID)
+			owners, err := repo.CountOwners(ctx, access.Organization.ID)
 			if err != nil {
 				return err
 			}
@@ -269,11 +269,11 @@ func (s *Service) SetMemberRoles(
 		}
 
 		return audit.NewRecorder(db).Record(ctx, audit.Event{
-			TenantID:    &access.Tenant.ID,
-			ActorUserID: &actor.ID,
-			Action:      audit.ActionMemberUpdated,
-			TargetType:  "user",
-			TargetID:    targetUserID.String(),
+			OrganizationID: &access.Organization.ID,
+			ActorUserID:    &actor.ID,
+			Action:         audit.ActionMemberUpdated,
+			TargetType:     "user",
+			TargetID:       targetUserID.String(),
 			Metadata: map[string]any{
 				"from": roleKeys(before),
 				"to":   roleKeys(roles),
@@ -295,7 +295,7 @@ func (s *Service) SetMemberRoles(
 // The error names the permissions the caller was missing, because "forbidden"
 // with no explanation is how an admin ends up filing a bug report about a role
 // editor that mysteriously refuses to save.
-func checkEscalation(actor TenantAccess, granting PermissionSet) error {
+func checkEscalation(actor OrganizationAccess, granting PermissionSet) error {
 	if actor.Permissions.Superset(granting) {
 		return nil
 	}
@@ -309,9 +309,9 @@ func checkEscalation(actor TenantAccess, granting PermissionSet) error {
 }
 
 // actorHoldsOwner reports whether the caller genuinely holds the system owner
-// role in this tenant (as opposed to merely holding every permission, which a
+// role in this organization (as opposed to merely holding every permission, which a
 // custom role could in principle also do).
-func actorHoldsOwner(access TenantAccess) bool {
+func actorHoldsOwner(access OrganizationAccess) bool {
 	return hasOwnerRole(access.Roles)
 }
 

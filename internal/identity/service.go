@@ -67,8 +67,8 @@ type RequestMeta struct {
 
 // ---------------------------------------------------------------- registration
 
-// Register creates a global user account. It does not create or join a tenant:
-// the new user then either creates their own tenant or accepts an invitation.
+// Register creates a global user account. It does not create or join an organization:
+// the new user then either creates their own organization or accepts an invitation.
 func (s *Service) Register(ctx context.Context, email, password, fullName string) (User, error) {
 	email, err := normalizeEmail(email)
 	if err != nil {
@@ -274,13 +274,13 @@ func (s *Service) RevokeSession(ctx context.Context, actor User, sessionID uuid.
 	})
 }
 
-// PurgeDeletedTenants hard-deletes tenants soft-deleted longer than retain ago.
+// PurgeDeletedOrganizations hard-deletes organizations soft-deleted longer than retain ago.
 //
 // It runs in a transaction that sets app.audit_purge, because the cascade destroys
-// the tenant's audit entries too -- and the append-only trigger refuses any other
+// the organization's audit entries too -- and the append-only trigger refuses any other
 // DELETE against that table. Destroying an audit trail should take a deliberate act,
 // and this is what one looks like.
-func (s *Service) PurgeDeletedTenants(ctx context.Context, retain time.Duration) (int64, error) {
+func (s *Service) PurgeDeletedOrganizations(ctx context.Context, retain time.Duration) (int64, error) {
 	if retain <= 0 {
 		return 0, nil // keep forever: the default
 	}
@@ -291,7 +291,7 @@ func (s *Service) PurgeDeletedTenants(ctx context.Context, retain time.Duration)
 			return err
 		}
 		var err error
-		purged, err = NewRepository(db).PurgeDeletedTenants(ctx, retain)
+		purged, err = NewRepository(db).PurgeDeletedOrganizations(ctx, retain)
 		return err
 	})
 	return purged, err
@@ -348,56 +348,56 @@ func (s *Service) CleanupSessions(ctx context.Context, retain time.Duration) (in
 	return s.repo.DeleteDeadSessions(ctx, retain)
 }
 
-// ---------------------------------------------------------------- tenants
+// ---------------------------------------------------------------- organizations
 
-// CreateTenant creates a tenant and makes the caller its owner, atomically.
+// CreateOrganization creates an organization and makes the caller its owner, atomically.
 //
-// The two must not be separable: a committed tenant with no membership would be
+// The two must not be separable: a committed organization with no membership would be
 // invisible and unadministrable by anyone, including the person who just made it.
-func (s *Service) CreateTenant(ctx context.Context, actor User, slug, name string) (Tenant, error) {
-	// The two gates on standing up a tenant, and they exist for the same reason: an
-	// account nobody has verified, creating tenants without limit, is free storage
+func (s *Service) CreateOrganization(ctx context.Context, actor User, slug, name string) (Organization, error) {
+	// The two gates on standing up an organization, and they exist for the same reason: an
+	// account nobody has verified, creating organizations without limit, is free storage
 	// for an abuser and a bill for you.
 	if err := s.requireVerifiedEmail(actor); err != nil {
-		return Tenant{}, err
+		return Organization{}, err
 	}
-	if s.cfg.MaxTenantsPerUser > 0 {
-		n, err := s.repo.CountTenantsForUser(ctx, actor.ID)
+	if s.cfg.MaxOrganizationsPerUser > 0 {
+		n, err := s.repo.CountOrganizationsForUser(ctx, actor.ID)
 		if err != nil {
-			return Tenant{}, err
+			return Organization{}, err
 		}
-		if n >= s.cfg.MaxTenantsPerUser {
-			return Tenant{}, ErrTooManyTenants
+		if n >= s.cfg.MaxOrganizationsPerUser {
+			return Organization{}, ErrTooManyOrganizations
 		}
 	}
 
 	slug, err := normalizeSlug(slug)
 	if err != nil {
-		return Tenant{}, err
+		return Organization{}, err
 	}
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return Tenant{}, invalid("tenant name is required")
+		return Organization{}, invalid("organization name is required")
 	}
 
-	var tenant Tenant
+	var organization Organization
 	err = database.InTx(ctx, s.pool, func(db database.DB) error {
 		repo := NewRepository(db)
 
-		tenant, err = repo.CreateTenant(ctx, slug, name)
+		organization, err = repo.CreateOrganization(ctx, slug, name)
 		if err != nil {
 			return err
 		}
 
-		membership, err := repo.CreateMembership(ctx, actor.ID, tenant.ID)
+		membership, err := repo.CreateMembership(ctx, actor.ID, organization.ID)
 		if err != nil {
 			return err
 		}
 
 		// Make the creator an owner. All three of these must commit together: a
-		// tenant with no owner, or a membership with no roles, is a tenant nobody
+		// organization with no owner, or a membership with no roles, is an organization nobody
 		// -- including the person who just made it -- can administer.
-		owner, err := repo.GetRoleByKey(ctx, tenant.ID, RoleKeyOwner)
+		owner, err := repo.GetRoleByKey(ctx, organization.ID, RoleKeyOwner)
 		if err != nil {
 			return fmt.Errorf("identity: the system owner role is missing: %w", err)
 		}
@@ -406,91 +406,91 @@ func (s *Service) CreateTenant(ctx context.Context, actor User, slug, name strin
 		}
 
 		return audit.NewRecorder(db).Record(ctx, audit.Event{
-			TenantID:    &tenant.ID,
-			ActorUserID: &actor.ID,
-			Action:      audit.ActionTenantCreated,
-			TargetType:  "tenant",
-			TargetID:    tenant.ID.String(),
-			Metadata:    map[string]any{"slug": slug, "name": name},
+			OrganizationID: &organization.ID,
+			ActorUserID:    &actor.ID,
+			Action:         audit.ActionOrganizationCreated,
+			TargetType:     "organization",
+			TargetID:       organization.ID.String(),
+			Metadata:       map[string]any{"slug": slug, "name": name},
 		})
 	})
 	if err != nil {
-		return Tenant{}, err
+		return Organization{}, err
 	}
-	return tenant, nil
+	return organization, nil
 }
 
-// ListTenants returns the tenants the user belongs to, with their roles in each.
-// Soft-deleted tenants are not among them.
-func (s *Service) ListTenants(ctx context.Context, userID uuid.UUID) ([]TenantMembership, error) {
-	return s.repo.ListTenantsForUser(ctx, userID)
+// ListOrganizations returns the organizations the user belongs to, with their roles in each.
+// Soft-deleted organizations are not among them.
+func (s *Service) ListOrganizations(ctx context.Context, userID uuid.UUID) ([]OrganizationMembership, error) {
+	return s.repo.ListOrganizationsForUser(ctx, userID)
 }
 
-// UpdateTenant renames a tenant. Requires tenant.update.
+// UpdateOrganization renames an organization. Requires organization.update.
 //
 // The name is the only field that changes. The slug is immutable -- see
-// Tenant.Slug -- and a request that tries to change it is rejected at the handler.
-func (s *Service) UpdateTenant(ctx context.Context, actor User, access TenantAccess, name string) (Tenant, error) {
+// Organization.Slug -- and a request that tries to change it is rejected at the handler.
+func (s *Service) UpdateOrganization(ctx context.Context, actor User, access OrganizationAccess, name string) (Organization, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return Tenant{}, invalid("tenant name is required")
+		return Organization{}, invalid("organization name is required")
 	}
 	if len(name) > 200 {
-		return Tenant{}, invalid("tenant name must be at most 200 characters")
+		return Organization{}, invalid("organization name must be at most 200 characters")
 	}
 
-	var tenant Tenant
+	var organization Organization
 	err := database.InTx(ctx, s.pool, func(db database.DB) error {
 		repo := NewRepository(db)
 
 		var err error
-		tenant, err = repo.UpdateTenant(ctx, access.Tenant.ID, name)
+		organization, err = repo.UpdateOrganization(ctx, access.Organization.ID, name)
 		if err != nil {
 			return err
 		}
 
 		return audit.NewRecorder(db).Record(ctx, audit.Event{
-			TenantID:    &access.Tenant.ID,
-			ActorUserID: &actor.ID,
-			Action:      audit.ActionTenantUpdated,
-			TargetType:  "tenant",
-			TargetID:    access.Tenant.ID.String(),
-			Metadata:    map[string]any{"from": access.Tenant.Name, "to": name},
+			OrganizationID: &access.Organization.ID,
+			ActorUserID:    &actor.ID,
+			Action:         audit.ActionOrganizationUpdated,
+			TargetType:     "organization",
+			TargetID:       access.Organization.ID.String(),
+			Metadata:       map[string]any{"from": access.Organization.Name, "to": name},
 		})
 	})
 	if err != nil {
-		return Tenant{}, err
+		return Organization{}, err
 	}
-	return tenant, nil
+	return organization, nil
 }
 
-// DeleteTenant soft-deletes a tenant. Requires tenant.delete, which only the
+// DeleteOrganization soft-deletes an organization. Requires organization.delete, which only the
 // owner role carries.
 //
-// The tenant becomes invisible to everyone -- including its owners -- immediately.
+// The organization becomes invisible to everyone -- including its owners -- immediately.
 // Nothing is destroyed: every membership, role, invitation, and audit entry stays,
 // so a superuser can restore it whole.
 //
-// The audit entry is written to the tenant that is being deleted, which is not
-// contradictory: the audit log is not filtered by the tenant's liveness, and a
-// restored tenant should have the record of its own deletion.
-func (s *Service) DeleteTenant(ctx context.Context, actor User, access TenantAccess) error {
+// The audit entry is written to the organization that is being deleted, which is not
+// contradictory: the audit log is not filtered by the organization's liveness, and a
+// restored organization should have the record of its own deletion.
+func (s *Service) DeleteOrganization(ctx context.Context, actor User, access OrganizationAccess) error {
 	return database.InTx(ctx, s.pool, func(db database.DB) error {
 		repo := NewRepository(db)
 
-		if err := repo.SoftDeleteTenant(ctx, access.Tenant.ID); err != nil {
+		if err := repo.SoftDeleteOrganization(ctx, access.Organization.ID); err != nil {
 			return err
 		}
 
 		return audit.NewRecorder(db).Record(ctx, audit.Event{
-			TenantID:    &access.Tenant.ID,
-			ActorUserID: &actor.ID,
-			Action:      audit.ActionTenantDeleted,
-			TargetType:  "tenant",
-			TargetID:    access.Tenant.ID.String(),
+			OrganizationID: &access.Organization.ID,
+			ActorUserID:    &actor.ID,
+			Action:         audit.ActionOrganizationDeleted,
+			TargetType:     "organization",
+			TargetID:       access.Organization.ID.String(),
 			Metadata: map[string]any{
-				"slug": access.Tenant.Slug,
-				"name": access.Tenant.Name,
+				"slug": access.Organization.Slug,
+				"name": access.Organization.Name,
 				// The slug is now free for anyone to claim. Record it, because if
 				// somebody does, a later restore cannot have it back.
 				"slug_released": true,
@@ -499,21 +499,21 @@ func (s *Service) DeleteTenant(ctx context.Context, actor User, access TenantAcc
 	})
 }
 
-// RestoreTenant brings a soft-deleted tenant back. Superuser only -- and it has to
-// be, because a deleted tenant 404s for its own owners, so nobody inside it can
+// RestoreOrganization brings a soft-deleted organization back. Superuser only -- and it has to
+// be, because a deleted organization 404s for its own owners, so nobody inside it can
 // ask for it back.
 //
 // slug may be empty to keep the one it had. If that slug has since been claimed by
-// a live tenant, this returns ErrSlugTaken and the caller must supply another: the
-// unique index has no room for two live tenants on one slug. Restore is always
+// a live organization, this returns ErrSlugTaken and the caller must supply another: the
+// unique index has no room for two live organizations on one slug. Restore is always
 // possible; it cannot always give you your old URL back.
-func (s *Service) RestoreTenant(ctx context.Context, actor User, tenantID uuid.UUID, slug string) (Tenant, error) {
-	var tenant Tenant
+func (s *Service) RestoreOrganization(ctx context.Context, actor User, organizationID uuid.UUID, slug string) (Organization, error) {
+	var organization Organization
 
 	err := database.InTx(ctx, s.pool, func(db database.DB) error {
 		repo := NewRepository(db)
 
-		deleted, err := repo.GetDeletedTenant(ctx, tenantID)
+		deleted, err := repo.GetDeletedOrganization(ctx, organizationID)
 		if err != nil {
 			return err
 		}
@@ -527,65 +527,65 @@ func (s *Service) RestoreTenant(ctx context.Context, actor User, tenantID uuid.U
 			}
 		}
 
-		tenant, err = repo.RestoreTenant(ctx, tenantID, target)
+		organization, err = repo.RestoreOrganization(ctx, organizationID, target)
 		if err != nil {
 			return err
 		}
 
 		return audit.NewRecorder(db).Record(ctx, audit.Event{
-			TenantID:    &tenant.ID,
-			ActorUserID: &actor.ID,
-			Action:      audit.ActionTenantRestored,
-			TargetType:  "tenant",
-			TargetID:    tenant.ID.String(),
+			OrganizationID: &organization.ID,
+			ActorUserID:    &actor.ID,
+			Action:         audit.ActionOrganizationRestored,
+			TargetType:     "organization",
+			TargetID:       organization.ID.String(),
 			Metadata: map[string]any{
-				"slug":          tenant.Slug,
+				"slug":          organization.Slug,
 				"original_slug": deleted.Slug,
-				"slug_changed":  tenant.Slug != deleted.Slug,
+				"slug_changed":  organization.Slug != deleted.Slug,
 			},
 		})
 	})
 	if err != nil {
-		return Tenant{}, err
+		return Organization{}, err
 	}
-	return tenant, nil
+	return organization, nil
 }
 
-// ResolveTenant turns the slug in a request path into a tenant plus the caller's
-// authority in it. This is the authorization gate for every tenant-scoped route,
+// ResolveOrganization turns the slug in a request path into an organization plus the caller's
+// authority in it. This is the authorization gate for every organization-scoped route,
 // and the middleware in internal/server calls nothing else to make its decision.
 //
 // Access comes from one of two places, in this order:
 //
 //   - A membership row. The ordinary path: the role on that row is the answer.
-//   - The global superuser flag. A superuser may enter ANY tenant, as an implicit
-//     owner, with no membership. TenantAccess.ViaSuperuser marks this, and the
+//   - The global superuser flag. A superuser may enter ANY organization, as an implicit
+//     owner, with no membership. OrganizationAccess.ViaSuperuser marks this, and the
 //     middleware writes an audit entry for it -- see Service.RecordSuperuserAccess.
 //
 // A superuser who genuinely IS a member gets their real role and no bypass flag:
-// there is nothing extraordinary about them using a tenant they belong to, and
+// there is nothing extraordinary about them using an organization they belong to, and
 // auditing it would bury the accesses that matter in noise.
 //
-// A tenant that does not exist and a tenant the caller cannot see both return
+// An organization that does not exist and an organization the caller cannot see both return
 // ErrNotFound, and must: a distinguishable "403 Forbidden" would let a stranger
-// enumerate which tenant slugs are taken.
-func (s *Service) ResolveTenant(ctx context.Context, user User, slug string) (TenantAccess, error) {
-	tenant, err := s.repo.GetTenantBySlug(ctx, slug)
+// enumerate which organization slugs are taken.
+func (s *Service) ResolveOrganization(ctx context.Context, user User, slug string) (OrganizationAccess, error) {
+	organization, err := s.repo.GetOrganizationBySlug(ctx, slug)
 	if err != nil {
 		// Note that a superuser gets ErrNotFound here too, for a slug that really
-		// does not exist. The bypass grants entry to tenants, not to fictions.
-		return TenantAccess{}, err
+		// does not exist. The bypass grants entry to organizations, not to fictions.
+		return OrganizationAccess{}, err
 	}
 
-	roles, err := s.repo.LoadMemberRoles(ctx, user.ID, tenant.ID)
+	roles, err := s.repo.LoadMemberRoles(ctx, user.ID, organization.ID)
 	switch {
 	case err == nil:
 		// The ordinary path: the caller's permissions are the union of every role
 		// they hold here.
-		return TenantAccess{
-			Tenant:      tenant,
-			Roles:       roles,
-			Permissions: unionPermissions(roles),
+		return OrganizationAccess{
+			Organization: organization,
+			Roles:        roles,
+			Permissions:  unionPermissions(roles),
 		}, nil
 
 	case errors.Is(err, ErrNotFound) && user.IsSuperuser:
@@ -593,33 +593,33 @@ func (s *Service) ResolveTenant(ctx context.Context, user User, slug string) (Te
 		// requirePermission check passes -- but they hold no ROLE, because they are
 		// not a member of anything. ViaSuperuser records that, and the middleware
 		// audits it.
-		return TenantAccess{
-			Tenant:       tenant,
+		return OrganizationAccess{
+			Organization: organization,
 			Roles:        nil,
 			Permissions:  AllPermissions(),
 			ViaSuperuser: true,
 		}, nil
 
 	default:
-		return TenantAccess{}, err // ErrNotFound: same answer as "no such tenant"
+		return OrganizationAccess{}, err // ErrNotFound: same answer as "no such organization"
 	}
 }
 
-// RecordSuperuserAccess writes the audit entry for a superuser entering a tenant
+// RecordSuperuserAccess writes the audit entry for a superuser entering an organization
 // they do not belong to. The middleware calls it on every such request.
 //
 // This is a database write on a read path, and that is the deliberate cost of the
 // bypass: a superuser who can silently read any customer's data is a liability,
 // and one who cannot do it unseen is merely powerful. If the write volume ever
-// hurts, throttle it per (user, tenant) the way sessions.last_used_at is
+// hurts, throttle it per (user, organization) the way sessions.last_used_at is
 // throttled -- do not remove it.
-func (s *Service) RecordSuperuserAccess(ctx context.Context, user User, tenant Tenant, method, path string) error {
+func (s *Service) RecordSuperuserAccess(ctx context.Context, user User, organization Organization, method, path string) error {
 	return audit.NewRecorder(s.pool).Record(ctx, audit.Event{
-		TenantID:    &tenant.ID,
-		ActorUserID: &user.ID,
-		Action:      audit.ActionSuperuserTenantAccessed,
-		TargetType:  "tenant",
-		TargetID:    tenant.ID.String(),
+		OrganizationID: &organization.ID,
+		ActorUserID:    &user.ID,
+		Action:         audit.ActionSuperuserOrganizationAccessed,
+		TargetType:     "organization",
+		TargetID:       organization.ID.String(),
 		Metadata: map[string]any{
 			"method": method,
 			"path":   path,
@@ -630,10 +630,10 @@ func (s *Service) RecordSuperuserAccess(ctx context.Context, user User, tenant T
 
 // ---------------------------------------------------------------- superuser
 
-// ListAllTenants returns every tenant in the installation. Superuser only: the
+// ListAllOrganizations returns every organization in the installation. Superuser only: the
 // route that reaches it sits behind requireSuperuser.
-func (s *Service) ListAllTenants(ctx context.Context, before uuid.UUID, limit int) ([]TenantSummary, error) {
-	return s.repo.ListAllTenants(ctx, before, limit)
+func (s *Service) ListAllOrganizations(ctx context.Context, before uuid.UUID, limit int) ([]OrganizationSummary, error) {
+	return s.repo.ListAllOrganizations(ctx, before, limit)
 }
 
 // ListAllUsers returns every user in the installation. Superuser only.
@@ -677,7 +677,7 @@ func (s *Service) SetUserActive(ctx context.Context, actor User, targetUserID uu
 			metadata["sessions_revoked"] = revoked
 		}
 
-		// TenantID is nil: this is an installation-wide action, not a tenant one.
+		// OrganizationID is nil: this is an installation-wide action, not an organization one.
 		return audit.NewRecorder(db).Record(ctx, audit.Event{
 			ActorUserID: &actor.ID,
 			Action:      action,
@@ -735,29 +735,29 @@ func (s *Service) SetSuperuser(ctx context.Context, email string, isSuperuser bo
 
 // ---------------------------------------------------------------- members
 
-// ListMembers returns the tenant's members.
-func (s *Service) ListMembers(ctx context.Context, tenantID uuid.UUID) ([]Member, error) {
-	return s.repo.ListMembers(ctx, tenantID)
+// ListMembers returns the organization's members.
+func (s *Service) ListMembers(ctx context.Context, organizationID uuid.UUID) ([]Member, error) {
+	return s.repo.ListMembers(ctx, organizationID)
 }
 
-// RemoveMember removes a user from a tenant.
+// RemoveMember removes a user from an organization.
 //
 // Two rules, both of which also live in SetMemberRoles because they guard the
 // same thing from a different direction: only an owner may remove an owner, and
 // the last owner cannot be removed at all.
 //
-// Removing yourself is allowed -- that is how you leave a tenant -- and is subject
-// to the identical last-owner check, which is why the sole owner of a tenant
+// Removing yourself is allowed -- that is how you leave an organization -- and is subject
+// to the identical last-owner check, which is why the sole owner of an organization
 // cannot walk out of it without appointing a successor first.
-func (s *Service) RemoveMember(ctx context.Context, actor User, access TenantAccess, targetUserID uuid.UUID) error {
+func (s *Service) RemoveMember(ctx context.Context, actor User, access OrganizationAccess, targetUserID uuid.UUID) error {
 	return database.InTx(ctx, s.pool, func(db database.DB) error {
 		repo := NewRepository(db)
 
-		if err := repo.LockTenant(ctx, access.Tenant.ID); err != nil {
+		if err := repo.LockOrganization(ctx, access.Organization.ID); err != nil {
 			return err
 		}
 
-		targetRoles, err := repo.LoadMemberRoles(ctx, targetUserID, access.Tenant.ID)
+		targetRoles, err := repo.LoadMemberRoles(ctx, targetUserID, access.Organization.ID)
 		if err != nil {
 			return err
 		}
@@ -771,7 +771,7 @@ func (s *Service) RemoveMember(ctx context.Context, actor User, access TenantAcc
 				return ErrForbidden
 			}
 
-			owners, err := repo.CountOwners(ctx, access.Tenant.ID)
+			owners, err := repo.CountOwners(ctx, access.Organization.ID)
 			if err != nil {
 				return err
 			}
@@ -780,24 +780,24 @@ func (s *Service) RemoveMember(ctx context.Context, actor User, access TenantAcc
 			}
 		}
 
-		if err := repo.DeleteMembership(ctx, access.Tenant.ID, targetUserID); err != nil {
+		if err := repo.DeleteMembership(ctx, access.Organization.ID, targetUserID); err != nil {
 			return err
 		}
 
 		return audit.NewRecorder(db).Record(ctx, audit.Event{
-			TenantID:    &access.Tenant.ID,
-			ActorUserID: &actor.ID,
-			Action:      audit.ActionMemberRemoved,
-			TargetType:  "user",
-			TargetID:    targetUserID.String(),
-			Metadata:    map[string]any{"roles": roleKeys(targetRoles)},
+			OrganizationID: &access.Organization.ID,
+			ActorUserID:    &actor.ID,
+			Action:         audit.ActionMemberRemoved,
+			TargetType:     "user",
+			TargetID:       targetUserID.String(),
+			Metadata:       map[string]any{"roles": roleKeys(targetRoles)},
 		})
 	})
 }
 
 // ---------------------------------------------------------------- invitations
 
-// Invite creates an invitation to join a tenant and returns it along with the
+// Invite creates an invitation to join an organization and returns it along with the
 // plaintext token. The token is returned exactly once, here: hand it to your
 // mailer, put it in a link, and do not log it.
 //
@@ -818,16 +818,16 @@ func (s *Service) RemoveMember(ctx context.Context, actor User, access TenantAcc
 // In development the "inbox" is the application log (MAIL_BACKEND=log), which is
 // exactly why startup refuses that backend in production.
 func (s *Service) Invite(
-	ctx context.Context, actor User, access TenantAccess, email string, roleID uuid.UUID,
+	ctx context.Context, actor User, access OrganizationAccess, email string, roleID uuid.UUID,
 ) (Invitation, error) {
 	email, err := normalizeEmail(email)
 	if err != nil {
 		return Invitation{}, err
 	}
 
-	// Resolving the role through the tenant is what stops an admin of tenant A
-	// from inviting somebody into tenant B's custom role by id.
-	role, err := s.repo.GetRole(ctx, access.Tenant.ID, roleID)
+	// Resolving the role through the organization is what stops an admin of organization A
+	// from inviting somebody into organization B's custom role by id.
+	role, err := s.repo.GetRole(ctx, access.Organization.ID, roleID)
 	if err != nil {
 		return Invitation{}, err
 	}
@@ -837,7 +837,7 @@ func (s *Service) Invite(
 
 	// Already a member? Then there is nothing to invite them to.
 	if existing, err := s.repo.GetUserByEmail(ctx, email); err == nil {
-		if _, err := s.repo.GetMembership(ctx, existing.ID, access.Tenant.ID); err == nil {
+		if _, err := s.repo.GetMembership(ctx, existing.ID, access.Organization.ID); err == nil {
 			return Invitation{}, ErrAlreadyMember
 		} else if !errors.Is(err, ErrNotFound) {
 			return Invitation{}, err
@@ -856,14 +856,14 @@ func (s *Service) Invite(
 		repo := NewRepository(db)
 
 		// Re-inviting somebody replaces their outstanding invitation rather than
-		// colliding with the partial unique index on (tenant_id, email). This also
+		// colliding with the partial unique index on (organization_id, email). This also
 		// invalidates the old link, which is the behaviour you want if the first
 		// one went to the wrong address.
-		if err := repo.RevokePendingInvitationFor(ctx, access.Tenant.ID, email); err != nil {
+		if err := repo.RevokePendingInvitationFor(ctx, access.Organization.ID, email); err != nil {
 			return err
 		}
 
-		id, err := repo.CreateInvitation(ctx, access.Tenant.ID, email, role.ID, actor.ID, digest,
+		id, err := repo.CreateInvitation(ctx, access.Organization.ID, email, role.ID, actor.ID, digest,
 			time.Now().Add(s.cfg.InvitationTTL))
 		if err != nil {
 			return err
@@ -875,12 +875,12 @@ func (s *Service) Invite(
 		}
 
 		return audit.NewRecorder(db).Record(ctx, audit.Event{
-			TenantID:    &access.Tenant.ID,
-			ActorUserID: &actor.ID,
-			Action:      audit.ActionInvitationCreated,
-			TargetType:  "invitation",
-			TargetID:    inv.ID.String(),
-			Metadata:    map[string]any{"email": email, "role": role.Key},
+			OrganizationID: &access.Organization.ID,
+			ActorUserID:    &actor.ID,
+			Action:         audit.ActionInvitationCreated,
+			TargetType:     "invitation",
+			TargetID:       inv.ID.String(),
+			Metadata:       map[string]any{"email": email, "role": role.Key},
 		})
 	})
 	if err != nil {
@@ -891,7 +891,7 @@ func (s *Service) Invite(
 	// Send AFTER the commit. The other order would email a link to an invitation
 	// that does not exist yet -- and could email one for an invitation that never
 	// comes to exist, if the transaction then rolled back.
-	msg := mail.Invitation(s.mailCfg.BaseURL, access.Tenant.Name, actor.Email, plaintext)
+	msg := mail.Invitation(s.mailCfg.BaseURL, access.Organization.Name, actor.Email, plaintext)
 	msg.To = email
 
 	if err := s.mailer.Send(ctx, msg); err != nil {
@@ -901,7 +901,7 @@ func (s *Service) Invite(
 		// the invitation exists, and it can be resent.
 		s.log.Error("invitation created but the email could not be sent",
 			slog.String("email", email),
-			slog.String("tenant", access.Tenant.Slug),
+			slog.String("organization", access.Organization.Slug),
 			slog.String("error", err.Error()),
 		)
 		return inv, ErrMailFailed
@@ -909,26 +909,26 @@ func (s *Service) Invite(
 	return inv, nil
 }
 
-// ListInvitations returns the tenant's outstanding invitations.
-func (s *Service) ListInvitations(ctx context.Context, tenantID uuid.UUID) ([]Invitation, error) {
-	return s.repo.ListPendingInvitations(ctx, tenantID)
+// ListInvitations returns the organization's outstanding invitations.
+func (s *Service) ListInvitations(ctx context.Context, organizationID uuid.UUID) ([]Invitation, error) {
+	return s.repo.ListPendingInvitations(ctx, organizationID)
 }
 
 // RevokeInvitation withdraws a pending invitation, invalidating its link.
-func (s *Service) RevokeInvitation(ctx context.Context, actor User, tenant Tenant, invitationID uuid.UUID) error {
+func (s *Service) RevokeInvitation(ctx context.Context, actor User, organization Organization, invitationID uuid.UUID) error {
 	return database.InTx(ctx, s.pool, func(db database.DB) error {
 		repo := NewRepository(db)
 
-		if err := repo.RevokeInvitation(ctx, tenant.ID, invitationID); err != nil {
+		if err := repo.RevokeInvitation(ctx, organization.ID, invitationID); err != nil {
 			return err
 		}
 
 		return audit.NewRecorder(db).Record(ctx, audit.Event{
-			TenantID:    &tenant.ID,
-			ActorUserID: &actor.ID,
-			Action:      audit.ActionInvitationRevoked,
-			TargetType:  "invitation",
-			TargetID:    invitationID.String(),
+			OrganizationID: &organization.ID,
+			ActorUserID:    &actor.ID,
+			Action:         audit.ActionInvitationRevoked,
+			TargetType:     "invitation",
+			TargetID:       invitationID.String(),
 		})
 	})
 }
@@ -938,12 +938,12 @@ func (s *Service) RevokeInvitation(ctx context.Context, actor User, tenant Tenan
 //
 // The invitation's email must match the caller's. Without that check, anyone who
 // obtained an invitation link -- forwarded, leaked from an inbox, guessed from a
-// screenshot -- could join a tenant they were never invited to, as whatever role
+// screenshot -- could join an organization they were never invited to, as whatever role
 // the invitation carried.
-func (s *Service) AcceptInvitation(ctx context.Context, user User, token string) (Tenant, error) {
+func (s *Service) AcceptInvitation(ctx context.Context, user User, token string) (Organization, error) {
 	digest := auth.HashToken(token)
 
-	var tenant Tenant
+	var organization Organization
 	err := database.InTx(ctx, s.pool, func(db database.DB) error {
 		repo := NewRepository(db)
 
@@ -957,11 +957,11 @@ func (s *Service) AcceptInvitation(ctx context.Context, user User, token string)
 		if !strings.EqualFold(inv.Email, user.Email) {
 			// Deliberately indistinguishable from a bad token: telling the holder
 			// of a leaked link "this is valid, but it is not for you" confirms both
-			// that the tenant exists and who was invited to it.
+			// that the organization exists and who was invited to it.
 			return ErrInvitationInvalid
 		}
 
-		if err := repo.LockTenant(ctx, inv.TenantID); err != nil {
+		if err := repo.LockOrganization(ctx, inv.OrganizationID); err != nil {
 			return err
 		}
 
@@ -972,7 +972,7 @@ func (s *Service) AcceptInvitation(ctx context.Context, user User, token string)
 			return err
 		}
 
-		membership, err := repo.CreateMembership(ctx, user.ID, inv.TenantID)
+		membership, err := repo.CreateMembership(ctx, user.ID, inv.OrganizationID)
 		if err != nil {
 			return err
 		}
@@ -991,23 +991,23 @@ func (s *Service) AcceptInvitation(ctx context.Context, user User, token string)
 		}
 
 		if err := audit.NewRecorder(db).Record(ctx, audit.Event{
-			TenantID:    &inv.TenantID,
-			ActorUserID: &user.ID,
-			Action:      audit.ActionInvitationClaimed,
-			TargetType:  "invitation",
-			TargetID:    inv.ID.String(),
-			Metadata:    map[string]any{"role": inv.Role.Key},
+			OrganizationID: &inv.OrganizationID,
+			ActorUserID:    &user.ID,
+			Action:         audit.ActionInvitationClaimed,
+			TargetType:     "invitation",
+			TargetID:       inv.ID.String(),
+			Metadata:       map[string]any{"role": inv.Role.Key},
 		}); err != nil {
 			return err
 		}
 
-		tenant, err = repo.GetTenantByID(ctx, inv.TenantID)
+		organization, err = repo.GetOrganizationByID(ctx, inv.OrganizationID)
 		return err
 	})
 	if err != nil {
-		return Tenant{}, err
+		return Organization{}, err
 	}
-	return tenant, nil
+	return organization, nil
 }
 
 // ---------------------------------------------------------------- validation
@@ -1016,7 +1016,7 @@ func (s *Service) AcceptInvitation(ctx context.Context, user User, token string)
 // what will appear in URLs, so it must be unambiguous and shell-safe.
 var slugPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 
-// reservedSlugs cannot be taken by a tenant, because they either already name a
+// reservedSlugs cannot be taken by an organization, because they either already name a
 // route or are ones you will want later. Reserving them costs nothing now and is
 // impossible once somebody owns them.
 var reservedSlugs = map[string]bool{
@@ -1025,20 +1025,20 @@ var reservedSlugs = map[string]bool{
 	"readyz": true, "metrics": true, "login": true, "logout": true,
 	"register": true, "signup": true, "me": true, "settings": true,
 	"support": true, "billing": true, "docs": true, "status": true,
-	"new": true, "invitations": true, "tenants": true,
+	"new": true, "invitations": true, "organizations": true,
 }
 
 func normalizeSlug(slug string) (string, error) {
 	slug = strings.ToLower(strings.TrimSpace(slug))
 	switch {
 	case slug == "":
-		return "", invalid("tenant slug is required")
+		return "", invalid("organization slug is required")
 	case len(slug) < 2 || len(slug) > 63:
-		return "", invalid("tenant slug must be between 2 and 63 characters")
+		return "", invalid("organization slug must be between 2 and 63 characters")
 	case !slugPattern.MatchString(slug):
-		return "", invalid("tenant slug may contain only lowercase letters, digits, and single hyphens between them")
+		return "", invalid("organization slug may contain only lowercase letters, digits, and single hyphens between them")
 	case reservedSlugs[slug]:
-		return "", invalid(fmt.Sprintf("tenant slug %q is reserved", slug))
+		return "", invalid(fmt.Sprintf("organization slug %q is reserved", slug))
 	}
 	return slug, nil
 }

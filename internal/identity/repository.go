@@ -18,10 +18,10 @@ import (
 // Repository is the only code in the application that writes SQL for identity
 // tables.
 //
-// THE TENANT-SCOPING RULE: every method that touches a tenant-owned table takes
-// tenantID as a parameter and puts it in the WHERE clause -- even when the row's
+// THE ORGANIZATION-SCOPING RULE: every method that touches an organization-owned table takes
+// organizationID as a parameter and puts it in the WHERE clause -- even when the row's
 // primary key would already be unique. Filtering by id alone is what turns a
-// guessed UUID into a cross-tenant read. The isolation test in
+// guessed UUID into a cross-organization read. The isolation test in
 // repository_test.go exists to keep this rule honest.
 type Repository struct {
 	db database.DB
@@ -125,7 +125,7 @@ func (r *Repository) SetUserActive(ctx context.Context, userID uuid.UUID, isActi
 }
 
 // ListAllUsers returns every user in the installation, newest first. Superuser
-// only -- there is no tenant filter here, which is precisely why the route that
+// only -- there is no organization filter here, which is precisely why the route that
 // reaches it sits behind requireSuperuser.
 //
 // Keyset pagination on the uuidv7 primary key, as with the audit log: no OFFSET,
@@ -167,9 +167,9 @@ func (r *Repository) ListAllUsers(ctx context.Context, before uuid.UUID, limit i
 	return out, nil
 }
 
-// ListAllTenants returns every tenant in the installation with its member count.
+// ListAllOrganizations returns every organization in the installation with its member count.
 // Superuser only, for the same reason as ListAllUsers.
-func (r *Repository) ListAllTenants(ctx context.Context, before uuid.UUID, limit int) ([]TenantSummary, error) {
+func (r *Repository) ListAllOrganizations(ctx context.Context, before uuid.UUID, limit int) ([]OrganizationSummary, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
@@ -180,15 +180,15 @@ func (r *Repository) ListAllTenants(ctx context.Context, before uuid.UUID, limit
 	}
 
 	// NO deleted_at filter, and this is one of only two places in the file that
-	// omits it. The staff surface must show DELETED tenants -- flagged, via
-	// Tenant.DeletedAt -- because a deleted tenant 404s for its own owners, so
+	// omits it. The staff surface must show DELETED organizations -- flagged, via
+	// Organization.DeletedAt -- because a deleted organization 404s for its own owners, so
 	// somebody outside it has to be able to find one in order to restore it. An
-	// invisible deleted tenant is an unrestorable one.
+	// invisible deleted organization is an unrestorable one.
 	rows, err := r.db.Query(ctx,
 		`SELECT t.id, t.slug, t.name, t.deleted_at, t.created_at, t.updated_at,
 		        count(m.id) AS member_count
-		 FROM tenants t
-		 LEFT JOIN memberships m ON m.tenant_id = t.id
+		 FROM organizations t
+		 LEFT JOIN memberships m ON m.organization_id = t.id
 		 WHERE ($1::uuid IS NULL OR t.id < $1::uuid)
 		 GROUP BY t.id
 		 ORDER BY t.id DESC
@@ -196,70 +196,70 @@ func (r *Repository) ListAllTenants(ctx context.Context, before uuid.UUID, limit
 		beforeArg, limit,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("identity: list all tenants: %w", err)
+		return nil, fmt.Errorf("identity: list all organizations: %w", err)
 	}
 	defer rows.Close()
 
-	out := []TenantSummary{}
+	out := []OrganizationSummary{}
 	for rows.Next() {
-		var ts TenantSummary
+		var ts OrganizationSummary
 		if err := rows.Scan(
-			&ts.Tenant.ID, &ts.Tenant.Slug, &ts.Tenant.Name, &ts.Tenant.DeletedAt,
-			&ts.Tenant.CreatedAt, &ts.Tenant.UpdatedAt, &ts.MemberCount,
+			&ts.Organization.ID, &ts.Organization.Slug, &ts.Organization.Name, &ts.Organization.DeletedAt,
+			&ts.Organization.CreatedAt, &ts.Organization.UpdatedAt, &ts.MemberCount,
 		); err != nil {
-			return nil, fmt.Errorf("identity: scan tenant summary: %w", err)
+			return nil, fmt.Errorf("identity: scan organization summary: %w", err)
 		}
 		out = append(out, ts)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("identity: iterate tenants: %w", err)
+		return nil, fmt.Errorf("identity: iterate organizations: %w", err)
 	}
 	return out, nil
 }
 
-// UpdateTenant renames a tenant.
+// UpdateOrganization renames an organization.
 //
 // The NAME is all that changes. The SLUG is immutable, and deliberately so: it is
 // in every URL, bookmark, saved API call, and webhook configuration your customers
 // have. Changing it breaks every one of them, silently. A slug is an identifier;
 // the name is the label, and the label is what people actually want to fix.
-func (r *Repository) UpdateTenant(ctx context.Context, tenantID uuid.UUID, name string) (Tenant, error) {
+func (r *Repository) UpdateOrganization(ctx context.Context, organizationID uuid.UUID, name string) (Organization, error) {
 	row := r.db.QueryRow(ctx,
-		`UPDATE tenants SET name = $2, updated_at = now()
-		 WHERE id = $1 AND `+liveTenant+`
-		 RETURNING `+tenantColumns,
-		tenantID, name,
+		`UPDATE organizations SET name = $2, updated_at = now()
+		 WHERE id = $1 AND `+liveOrganization+`
+		 RETURNING `+organizationColumns,
+		organizationID, name,
 	)
 
-	t, err := scanTenant(row)
+	t, err := scanOrganization(row)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Tenant{}, ErrNotFound
+		return Organization{}, ErrNotFound
 	}
 	if err != nil {
-		return Tenant{}, fmt.Errorf("identity: update tenant: %w", err)
+		return Organization{}, fmt.Errorf("identity: update organization: %w", err)
 	}
 	return t, nil
 }
 
-// SoftDeleteTenant marks a tenant deleted. Not one row is destroyed: every
-// membership, role, and audit entry stays exactly where it was, so the tenant can
+// SoftDeleteOrganization marks an organization deleted. Not one row is destroyed: every
+// membership, role, and audit entry stays exactly where it was, so the organization can
 // be restored whole.
 //
 // The effect is immediate and total. Because every other query in this file
-// filters `deleted_at IS NULL`, the tenant now 404s for EVERYONE, its owners
-// included, and vanishes from "my tenants".
+// filters `deleted_at IS NULL`, the organization now 404s for EVERYONE, its owners
+// included, and vanishes from "my organizations".
 //
-// It also releases the slug: the unique index covers live tenants only, so
+// It also releases the slug: the unique index covers live organizations only, so
 // somebody else may now claim it. That is what makes restore fallible -- see
-// RestoreTenant.
-func (r *Repository) SoftDeleteTenant(ctx context.Context, tenantID uuid.UUID) error {
+// RestoreOrganization.
+func (r *Repository) SoftDeleteOrganization(ctx context.Context, organizationID uuid.UUID) error {
 	tag, err := r.db.Exec(ctx,
-		`UPDATE tenants SET deleted_at = now(), updated_at = now()
-		 WHERE id = $1 AND `+liveTenant,
-		tenantID,
+		`UPDATE organizations SET deleted_at = now(), updated_at = now()
+		 WHERE id = $1 AND `+liveOrganization,
+		organizationID,
 	)
 	if err != nil {
-		return fmt.Errorf("identity: soft delete tenant: %w", err)
+		return fmt.Errorf("identity: soft delete organization: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound // already deleted, or never existed
@@ -267,50 +267,50 @@ func (r *Repository) SoftDeleteTenant(ctx context.Context, tenantID uuid.UUID) e
 	return nil
 }
 
-// RestoreTenant brings a soft-deleted tenant back, under the given slug.
+// RestoreOrganization brings a soft-deleted organization back, under the given slug.
 //
 // This is the SECOND query that ignores the deleted_at filter, and it must: it is
 // the only way back.
 //
 // The slug is a parameter rather than simply being the one it had, because
 // deletion released it and somebody may have taken it since. If the slug is in
-// use by a live tenant, the partial unique index rejects this and the caller gets
+// use by a live organization, the partial unique index rejects this and the caller gets
 // ErrSlugTaken -- they must pick another. Restore is always possible; it cannot
 // always give you your old URL back.
-func (r *Repository) RestoreTenant(ctx context.Context, tenantID uuid.UUID, slug string) (Tenant, error) {
+func (r *Repository) RestoreOrganization(ctx context.Context, organizationID uuid.UUID, slug string) (Organization, error) {
 	row := r.db.QueryRow(ctx,
-		`UPDATE tenants SET deleted_at = NULL, slug = $2, updated_at = now()
+		`UPDATE organizations SET deleted_at = NULL, slug = $2, updated_at = now()
 		 WHERE id = $1 AND deleted_at IS NOT NULL
-		 RETURNING `+tenantColumns,
-		tenantID, slug,
+		 RETURNING `+organizationColumns,
+		organizationID, slug,
 	)
 
-	t, err := scanTenant(row)
-	if isUniqueViolation(err, "tenants_live_slug_idx") {
-		return Tenant{}, ErrSlugTaken
+	t, err := scanOrganization(row)
+	if isUniqueViolation(err, "organizations_live_slug_idx") {
+		return Organization{}, ErrSlugTaken
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Tenant{}, ErrNotFound // not deleted, or no such tenant
+		return Organization{}, ErrNotFound // not deleted, or no such organization
 	}
 	if err != nil {
-		return Tenant{}, fmt.Errorf("identity: restore tenant: %w", err)
+		return Organization{}, fmt.Errorf("identity: restore organization: %w", err)
 	}
 	return t, nil
 }
 
-// GetDeletedTenant fetches a soft-deleted tenant by id, for the restore flow.
-func (r *Repository) GetDeletedTenant(ctx context.Context, tenantID uuid.UUID) (Tenant, error) {
+// GetDeletedOrganization fetches a soft-deleted organization by id, for the restore flow.
+func (r *Repository) GetDeletedOrganization(ctx context.Context, organizationID uuid.UUID) (Organization, error) {
 	row := r.db.QueryRow(ctx,
-		`SELECT `+tenantColumns+` FROM tenants WHERE id = $1 AND deleted_at IS NOT NULL`,
-		tenantID,
+		`SELECT `+organizationColumns+` FROM organizations WHERE id = $1 AND deleted_at IS NOT NULL`,
+		organizationID,
 	)
 
-	t, err := scanTenant(row)
+	t, err := scanOrganization(row)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Tenant{}, ErrNotFound
+		return Organization{}, ErrNotFound
 	}
 	if err != nil {
-		return Tenant{}, fmt.Errorf("identity: get deleted tenant: %w", err)
+		return Organization{}, fmt.Errorf("identity: get deleted organization: %w", err)
 	}
 	return t, nil
 }
@@ -332,170 +332,170 @@ func (r *Repository) UpdateUserPassword(ctx context.Context, userID uuid.UUID, p
 	return nil
 }
 
-// ---------------------------------------------------------------- tenants
+// ---------------------------------------------------------------- organizations
 
-const tenantColumns = `id, slug, name, deleted_at, created_at, updated_at`
+const organizationColumns = `id, slug, name, deleted_at, created_at, updated_at`
 
-// THE SOFT-DELETE RULE, and it is a footgun of exactly the same class as tenant
-// scoping: every read of a tenant must filter `deleted_at IS NULL`. A deleted
-// tenant is invisible to EVERYONE, including its owners -- that is what makes the
+// THE SOFT-DELETE RULE, and it is a footgun of exactly the same class as organization
+// scoping: every read of an organization must filter `deleted_at IS NULL`. A deleted
+// organization is invisible to EVERYONE, including its owners -- that is what makes the
 // deletion meaningful.
 //
 // The two exceptions are deliberate and both belong to the superuser: listing
-// deleted tenants (so somebody can find one to restore), and restoring one. They
+// deleted organizations (so somebody can find one to restore), and restoring one. They
 // are the only queries in this file that omit the filter, and each says so.
-const liveTenant = `deleted_at IS NULL`
+const liveOrganization = `deleted_at IS NULL`
 
-// CreateTenant inserts a tenant. It does not create a membership: use
-// Service.CreateTenant, which makes the creator the owner in the same
-// transaction, or you will produce a tenant nobody can administer.
-func (r *Repository) CreateTenant(ctx context.Context, slug, name string) (Tenant, error) {
+// CreateOrganization inserts an organization. It does not create a membership: use
+// Service.CreateOrganization, which makes the creator the owner in the same
+// transaction, or you will produce an organization nobody can administer.
+func (r *Repository) CreateOrganization(ctx context.Context, slug, name string) (Organization, error) {
 	row := r.db.QueryRow(ctx,
-		`INSERT INTO tenants (slug, name) VALUES ($1, $2) RETURNING `+tenantColumns,
+		`INSERT INTO organizations (slug, name) VALUES ($1, $2) RETURNING `+organizationColumns,
 		slug, name,
 	)
 
-	t, err := scanTenant(row)
-	// The constraint is a PARTIAL unique index over live tenants only (see 00008),
-	// not the plain UNIQUE it once was -- which is what lets a deleted tenant's slug
+	t, err := scanOrganization(row)
+	// The constraint is a PARTIAL unique index over live organizations only (see 00008),
+	// not the plain UNIQUE it once was -- which is what lets a deleted organization's slug
 	// be claimed by somebody else.
-	if isUniqueViolation(err, "tenants_live_slug_idx") {
-		return Tenant{}, ErrSlugTaken
+	if isUniqueViolation(err, "organizations_live_slug_idx") {
+		return Organization{}, ErrSlugTaken
 	}
 	if err != nil {
-		return Tenant{}, fmt.Errorf("identity: create tenant: %w", err)
+		return Organization{}, fmt.Errorf("identity: create organization: %w", err)
 	}
 	return t, nil
 }
 
-// GetTenantBySlug resolves the slug in a request path to a tenant. It does NOT
+// GetOrganizationBySlug resolves the slug in a request path to an organization. It does NOT
 // check that the caller may see it -- that is GetMembership's job, and the
-// tenant middleware always calls both.
-func (r *Repository) GetTenantBySlug(ctx context.Context, slug string) (Tenant, error) {
+// organization middleware always calls both.
+func (r *Repository) GetOrganizationBySlug(ctx context.Context, slug string) (Organization, error) {
 	row := r.db.QueryRow(ctx,
-		`SELECT `+tenantColumns+` FROM tenants WHERE slug = $1 AND `+liveTenant, slug)
-	t, err := scanTenant(row)
+		`SELECT `+organizationColumns+` FROM organizations WHERE slug = $1 AND `+liveOrganization, slug)
+	t, err := scanOrganization(row)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Tenant{}, ErrNotFound
+		return Organization{}, ErrNotFound
 	}
 	if err != nil {
-		return Tenant{}, fmt.Errorf("identity: get tenant by slug: %w", err)
+		return Organization{}, fmt.Errorf("identity: get organization by slug: %w", err)
 	}
 	return t, nil
 }
 
-// GetTenantByID looks a tenant up by primary key. Callers must already have
+// GetOrganizationByID looks an organization up by primary key. Callers must already have
 // established that the user may see it -- this method performs no authorization.
-func (r *Repository) GetTenantByID(ctx context.Context, id uuid.UUID) (Tenant, error) {
+func (r *Repository) GetOrganizationByID(ctx context.Context, id uuid.UUID) (Organization, error) {
 	row := r.db.QueryRow(ctx,
-		`SELECT `+tenantColumns+` FROM tenants WHERE id = $1 AND `+liveTenant, id)
-	t, err := scanTenant(row)
+		`SELECT `+organizationColumns+` FROM organizations WHERE id = $1 AND `+liveOrganization, id)
+	t, err := scanOrganization(row)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Tenant{}, ErrNotFound
+		return Organization{}, ErrNotFound
 	}
 	if err != nil {
-		return Tenant{}, fmt.Errorf("identity: get tenant by id: %w", err)
+		return Organization{}, fmt.Errorf("identity: get organization by id: %w", err)
 	}
 	return t, nil
 }
 
-// LockTenant takes a row-level exclusive lock on the tenant, held until the
+// LockOrganization takes a row-level exclusive lock on the organization, held until the
 // surrounding transaction ends. It must be called inside a transaction.
 //
-// Every mutation of a tenant's membership set takes this lock first, which
+// Every mutation of an organization's membership set takes this lock first, which
 // serialises them against each other. Without it, the last-owner guard is a
 // check-then-act race: two admins concurrently demoting one of the final two
 // owners would each see a count of two, each conclude their demotion is safe,
-// and between them leave the tenant with no owner at all.
+// and between them leave the organization with no owner at all.
 //
-// The lock is per-tenant, so it does not serialise unrelated tenants.
-func (r *Repository) LockTenant(ctx context.Context, tenantID uuid.UUID) error {
+// The lock is per-organization, so it does not serialise unrelated organizations.
+func (r *Repository) LockOrganization(ctx context.Context, organizationID uuid.UUID) error {
 	var id uuid.UUID
 	err := r.db.QueryRow(ctx,
-		`SELECT id FROM tenants WHERE id = $1 AND `+liveTenant+` FOR UPDATE`, tenantID).Scan(&id)
+		`SELECT id FROM organizations WHERE id = $1 AND `+liveOrganization+` FOR UPDATE`, organizationID).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
 	if err != nil {
-		return fmt.Errorf("identity: lock tenant: %w", err)
+		return fmt.Errorf("identity: lock organization: %w", err)
 	}
 	return nil
 }
 
-// ListTenantsForUser returns every tenant the user belongs to, with the roles
-// they hold in each. This is the "switch tenant" menu.
+// ListOrganizationsForUser returns every organization the user belongs to, with the roles
+// they hold in each. This is the "switch organization" menu.
 //
 // One query with a LEFT JOIN through membership_roles, folded back in Go, rather
-// than a roles query per tenant -- the classic N+1.
-func (r *Repository) ListTenantsForUser(ctx context.Context, userID uuid.UUID) ([]TenantMembership, error) {
+// than a roles query per organization -- the classic N+1.
+func (r *Repository) ListOrganizationsForUser(ctx context.Context, userID uuid.UUID) ([]OrganizationMembership, error) {
 	rows, err := r.db.Query(ctx,
 		`SELECT t.id, t.slug, t.name, t.created_at, t.updated_at,
 		        `+roleColumns+`, rp.permission
-		 FROM tenants t
-		 JOIN memberships m            ON m.tenant_id = t.id
+		 FROM organizations t
+		 JOIN memberships m            ON m.organization_id = t.id
 		 LEFT JOIN membership_roles mr ON mr.membership_id = m.id
 		 LEFT JOIN roles r             ON r.id = mr.role_id
 		 LEFT JOIN role_permissions rp ON rp.role_id = r.id
-		 WHERE m.user_id = $1 AND t.`+liveTenant+`
+		 WHERE m.user_id = $1 AND t.`+liveOrganization+`
 		 ORDER BY t.name, r.is_system DESC, r.key`,
 		userID,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("identity: list tenants for user: %w", err)
+		return nil, fmt.Errorf("identity: list organizations for user: %w", err)
 	}
 	defer rows.Close()
 
-	// The join fans out to one row per (tenant, role, permission); fold it back.
-	byTenant := map[uuid.UUID]*TenantMembership{}
-	roleByTenant := map[uuid.UUID]map[uuid.UUID]*Role{}
+	// The join fans out to one row per (organization, role, permission); fold it back.
+	byOrganization := map[uuid.UUID]*OrganizationMembership{}
+	roleByOrganization := map[uuid.UUID]map[uuid.UUID]*Role{}
 	var order []uuid.UUID
 
 	for rows.Next() {
 		var (
-			t                    Tenant
-			roleID, roleTenantID *uuid.UUID
-			roleKey, roleName    *string
-			isSystem             *bool
-			rCreated, rUpdated   *time.Time
-			perm                 *Permission
+			t                          Organization
+			roleID, roleOrganizationID *uuid.UUID
+			roleKey, roleName          *string
+			isSystem                   *bool
+			rCreated, rUpdated         *time.Time
+			perm                       *Permission
 		)
 		if err := rows.Scan(
 			&t.ID, &t.Slug, &t.Name, &t.CreatedAt, &t.UpdatedAt,
-			&roleID, &roleTenantID, &roleKey, &roleName, &isSystem, &rCreated, &rUpdated, &perm,
+			&roleID, &roleOrganizationID, &roleKey, &roleName, &isSystem, &rCreated, &rUpdated, &perm,
 		); err != nil {
-			return nil, fmt.Errorf("identity: scan tenant membership: %w", err)
+			return nil, fmt.Errorf("identity: scan organization membership: %w", err)
 		}
 
-		if _, seen := byTenant[t.ID]; !seen {
-			byTenant[t.ID] = &TenantMembership{Tenant: t}
-			roleByTenant[t.ID] = map[uuid.UUID]*Role{}
+		if _, seen := byOrganization[t.ID]; !seen {
+			byOrganization[t.ID] = &OrganizationMembership{Organization: t}
+			roleByOrganization[t.ID] = map[uuid.UUID]*Role{}
 			order = append(order, t.ID)
 		}
 		if roleID == nil {
 			continue
 		}
 
-		role, seenRole := roleByTenant[t.ID][*roleID]
+		role, seenRole := roleByOrganization[t.ID][*roleID]
 		if !seenRole {
 			role = &Role{
-				ID: *roleID, TenantID: roleTenantID, Key: *roleKey, Name: *roleName,
+				ID: *roleID, OrganizationID: roleOrganizationID, Key: *roleKey, Name: *roleName,
 				IsSystem: *isSystem, Permissions: PermissionSet{},
 				CreatedAt: *rCreated, UpdatedAt: *rUpdated,
 			}
-			roleByTenant[t.ID][*roleID] = role
+			roleByOrganization[t.ID][*roleID] = role
 		}
 		if perm != nil {
 			role.Permissions[*perm] = struct{}{}
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("identity: iterate tenants for user: %w", err)
+		return nil, fmt.Errorf("identity: iterate organizations for user: %w", err)
 	}
 
-	out := make([]TenantMembership, 0, len(order))
-	for _, tenantID := range order {
-		tm := byTenant[tenantID]
-		for _, role := range roleByTenant[tenantID] {
+	out := make([]OrganizationMembership, 0, len(order))
+	for _, organizationID := range order {
+		tm := byOrganization[organizationID]
+		for _, role := range roleByOrganization[organizationID] {
 			tm.Roles = append(tm.Roles, *role)
 		}
 		sortRoles(tm.Roles)
@@ -506,24 +506,24 @@ func (r *Repository) ListTenantsForUser(ctx context.Context, userID uuid.UUID) (
 
 // ---------------------------------------------------------------- memberships
 
-const membershipColumns = `id, user_id, tenant_id, created_at, updated_at`
+const membershipColumns = `id, user_id, organization_id, created_at, updated_at`
 
-// CreateMembership adds a user to a tenant. It grants NO roles -- the caller must
+// CreateMembership adds a user to an organization. It grants NO roles -- the caller must
 // follow it with SetMembershipRoles, in the same transaction.
 //
 // The two are separate because a membership's roles are now a set, not a column.
 // The service never leaves a member with zero roles (see ErrNoRoles): a member who
 // can do nothing and see nothing is a mistake, not an intent.
-func (r *Repository) CreateMembership(ctx context.Context, userID, tenantID uuid.UUID) (Membership, error) {
+func (r *Repository) CreateMembership(ctx context.Context, userID, organizationID uuid.UUID) (Membership, error) {
 	row := r.db.QueryRow(ctx,
-		`INSERT INTO memberships (user_id, tenant_id)
+		`INSERT INTO memberships (user_id, organization_id)
 		 VALUES ($1, $2)
 		 RETURNING `+membershipColumns,
-		userID, tenantID,
+		userID, organizationID,
 	)
 
 	m, err := scanMembership(row)
-	if isUniqueViolation(err, "memberships_user_id_tenant_id_key") {
+	if isUniqueViolation(err, "memberships_user_id_organization_id_key") {
 		return Membership{}, ErrAlreadyMember
 	}
 	if err != nil {
@@ -532,13 +532,13 @@ func (r *Repository) CreateMembership(ctx context.Context, userID, tenantID uuid
 	return m, nil
 }
 
-// GetMembership returns the user's membership in the tenant, or ErrNotFound if
+// GetMembership returns the user's membership in the organization, or ErrNotFound if
 // they have none. This single call is the authorization check that every
-// tenant-scoped request passes through.
-func (r *Repository) GetMembership(ctx context.Context, userID, tenantID uuid.UUID) (Membership, error) {
+// organization-scoped request passes through.
+func (r *Repository) GetMembership(ctx context.Context, userID, organizationID uuid.UUID) (Membership, error) {
 	row := r.db.QueryRow(ctx,
-		`SELECT `+membershipColumns+` FROM memberships WHERE user_id = $1 AND tenant_id = $2`,
-		userID, tenantID,
+		`SELECT `+membershipColumns+` FROM memberships WHERE user_id = $1 AND organization_id = $2`,
+		userID, organizationID,
 	)
 
 	m, err := scanMembership(row)
@@ -551,13 +551,13 @@ func (r *Repository) GetMembership(ctx context.Context, userID, tenantID uuid.UU
 	return m, nil
 }
 
-// ListMembers returns the tenant's members with their user details, the roles
+// ListMembers returns the organization's members with their user details, the roles
 // each holds, and the union of those roles' permissions.
 //
 // One query with a LEFT JOIN through membership_roles, folded back in Go. A roles
-// query per member would be the classic N+1: on a tenant with a few hundred
+// query per member would be the classic N+1: on an organization with a few hundred
 // members that is the difference between one round trip and several hundred.
-func (r *Repository) ListMembers(ctx context.Context, tenantID uuid.UUID) ([]Member, error) {
+func (r *Repository) ListMembers(ctx context.Context, organizationID uuid.UUID) ([]Member, error) {
 	rows, err := r.db.Query(ctx,
 		`SELECT u.id, u.email, u.full_name, m.created_at,
 		        `+roleColumns+`, rp.permission
@@ -566,9 +566,9 @@ func (r *Repository) ListMembers(ctx context.Context, tenantID uuid.UUID) ([]Mem
 		 LEFT JOIN membership_roles mr ON mr.membership_id = m.id
 		 LEFT JOIN roles r             ON r.id = mr.role_id
 		 LEFT JOIN role_permissions rp ON rp.role_id = r.id
-		 WHERE m.tenant_id = $1
+		 WHERE m.organization_id = $1
 		 ORDER BY u.email, r.is_system DESC, r.key`,
-		tenantID,
+		organizationID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("identity: list members: %w", err)
@@ -581,18 +581,18 @@ func (r *Repository) ListMembers(ctx context.Context, tenantID uuid.UUID) ([]Mem
 
 	for rows.Next() {
 		var (
-			userID               uuid.UUID
-			email, fullName      string
-			joinedAt             time.Time
-			roleID, roleTenantID *uuid.UUID
-			roleKey, roleName    *string
-			isSystem             *bool
-			rCreated, rUpdated   *time.Time
-			perm                 *Permission
+			userID                     uuid.UUID
+			email, fullName            string
+			joinedAt                   time.Time
+			roleID, roleOrganizationID *uuid.UUID
+			roleKey, roleName          *string
+			isSystem                   *bool
+			rCreated, rUpdated         *time.Time
+			perm                       *Permission
 		)
 		if err := rows.Scan(
 			&userID, &email, &fullName, &joinedAt,
-			&roleID, &roleTenantID, &roleKey, &roleName, &isSystem, &rCreated, &rUpdated, &perm,
+			&roleID, &roleOrganizationID, &roleKey, &roleName, &isSystem, &rCreated, &rUpdated, &perm,
 		); err != nil {
 			return nil, fmt.Errorf("identity: scan member: %w", err)
 		}
@@ -614,7 +614,7 @@ func (r *Repository) ListMembers(ctx context.Context, tenantID uuid.UUID) ([]Mem
 		role, seenRole := roleByUser[userID][*roleID]
 		if !seenRole {
 			role = &Role{
-				ID: *roleID, TenantID: roleTenantID, Key: *roleKey, Name: *roleName,
+				ID: *roleID, OrganizationID: roleOrganizationID, Key: *roleKey, Name: *roleName,
 				IsSystem: *isSystem, Permissions: PermissionSet{},
 				CreatedAt: *rCreated, UpdatedAt: *rUpdated,
 			}
@@ -643,16 +643,16 @@ func (r *Repository) ListMembers(ctx context.Context, tenantID uuid.UUID) ([]Mem
 	return out, nil
 }
 
-// DeleteMembership removes a user from a tenant. tenant_id is in the WHERE clause
-// so that an admin of tenant A cannot, by supplying a user ID they happen to
-// know, remove that user from tenant B.
+// DeleteMembership removes a user from an organization. organization_id is in the WHERE clause
+// so that an admin of organization A cannot, by supplying a user ID they happen to
+// know, remove that user from organization B.
 //
 // membership_roles cascades off the membership, so their role assignments go with
 // them.
-func (r *Repository) DeleteMembership(ctx context.Context, tenantID, userID uuid.UUID) error {
+func (r *Repository) DeleteMembership(ctx context.Context, organizationID, userID uuid.UUID) error {
 	tag, err := r.db.Exec(ctx,
-		`DELETE FROM memberships WHERE tenant_id = $1 AND user_id = $2`,
-		tenantID, userID,
+		`DELETE FROM memberships WHERE organization_id = $1 AND user_id = $2`,
+		organizationID, userID,
 	)
 	if err != nil {
 		return fmt.Errorf("identity: delete membership: %w", err)
@@ -929,12 +929,12 @@ func (r *Repository) DeleteDeadPasswordResets(ctx context.Context, retain time.D
 // ---------------------------------------------------------------- invitations
 
 // invitationSelect joins each invitation to the role it offers. An invitation now
-// points at a role row rather than carrying a role string, so a tenant can invite
+// points at a role row rather than carrying a role string, so an organization can invite
 // somebody straight into one of its own custom roles.
 const invitationSelect = `
-	SELECT i.id, i.tenant_id, i.email, i.invited_by, i.expires_at,
+	SELECT i.id, i.organization_id, i.email, i.invited_by, i.expires_at,
 	       i.accepted_at, i.revoked_at, i.created_at,
-	       r.id, r.tenant_id, r.key, r.name, r.is_system, r.created_at, r.updated_at,
+	       r.id, r.organization_id, r.key, r.name, r.is_system, r.created_at, r.updated_at,
 	       rp.permission
 	FROM invitations i
 	JOIN roles r                  ON r.id = i.role_id
@@ -943,7 +943,7 @@ const invitationSelect = `
 // CreateInvitation stores a pending invitation offering the given role.
 func (r *Repository) CreateInvitation(
 	ctx context.Context,
-	tenantID uuid.UUID,
+	organizationID uuid.UUID,
 	email string,
 	roleID uuid.UUID,
 	invitedBy uuid.UUID,
@@ -952,10 +952,10 @@ func (r *Repository) CreateInvitation(
 ) (uuid.UUID, error) {
 	var id uuid.UUID
 	err := r.db.QueryRow(ctx,
-		`INSERT INTO invitations (tenant_id, email, role_id, invited_by, token_hash, expires_at)
+		`INSERT INTO invitations (organization_id, email, role_id, invited_by, token_hash, expires_at)
 		 VALUES ($1, $2, $3, $4, $5, $6)
 		 RETURNING id`,
-		tenantID, email, roleID, invitedBy, tokenHash, expiresAt,
+		organizationID, email, roleID, invitedBy, tokenHash, expiresAt,
 	).Scan(&id)
 
 	if isUniqueViolation(err, "invitations_pending_email_idx") {
@@ -1019,14 +1019,14 @@ func collectInvitations(rows pgx.Rows) ([]Invitation, error) {
 		var (
 			inv                Invitation
 			role               Role
-			roleTenantID       *uuid.UUID
+			roleOrganizationID *uuid.UUID
 			rCreated, rUpdated time.Time
 			perm               *Permission
 		)
 		if err := rows.Scan(
-			&inv.ID, &inv.TenantID, &inv.Email, &inv.InvitedBy, &inv.ExpiresAt,
+			&inv.ID, &inv.OrganizationID, &inv.Email, &inv.InvitedBy, &inv.ExpiresAt,
 			&inv.AcceptedAt, &inv.RevokedAt, &inv.CreatedAt,
-			&role.ID, &roleTenantID, &role.Key, &role.Name, &role.IsSystem, &rCreated, &rUpdated,
+			&role.ID, &roleOrganizationID, &role.Key, &role.Name, &role.IsSystem, &rCreated, &rUpdated,
 			&perm,
 		); err != nil {
 			return nil, fmt.Errorf("identity: scan invitation: %w", err)
@@ -1034,7 +1034,7 @@ func collectInvitations(rows pgx.Rows) ([]Invitation, error) {
 
 		existing, seen := byID[inv.ID]
 		if !seen {
-			role.TenantID = roleTenantID
+			role.OrganizationID = roleOrganizationID
 			role.CreatedAt, role.UpdatedAt = rCreated, rUpdated
 			role.Permissions = PermissionSet{}
 			inv.Role = role
@@ -1058,17 +1058,17 @@ func collectInvitations(rows pgx.Rows) ([]Invitation, error) {
 	return out, nil
 }
 
-// ListPendingInvitations returns the tenant's outstanding invitations, each with
+// ListPendingInvitations returns the organization's outstanding invitations, each with
 // the role it offers.
-func (r *Repository) ListPendingInvitations(ctx context.Context, tenantID uuid.UUID) ([]Invitation, error) {
+func (r *Repository) ListPendingInvitations(ctx context.Context, organizationID uuid.UUID) ([]Invitation, error) {
 	rows, err := r.db.Query(ctx,
 		invitationSelect+`
-		 WHERE i.tenant_id = $1
+		 WHERE i.organization_id = $1
 		   AND i.accepted_at IS NULL
 		   AND i.revoked_at IS NULL
 		   AND i.expires_at > now()
 		 ORDER BY i.id DESC`,
-		tenantID,
+		organizationID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("identity: list invitations: %w", err)
@@ -1100,13 +1100,13 @@ func (r *Repository) AcceptInvitation(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-// RevokeInvitation withdraws a pending invitation. tenantID is in the WHERE
-// clause so an admin cannot revoke another tenant's invitation by id.
-func (r *Repository) RevokeInvitation(ctx context.Context, tenantID, id uuid.UUID) error {
+// RevokeInvitation withdraws a pending invitation. organizationID is in the WHERE
+// clause so an admin cannot revoke another organization's invitation by id.
+func (r *Repository) RevokeInvitation(ctx context.Context, organizationID, id uuid.UUID) error {
 	tag, err := r.db.Exec(ctx,
 		`UPDATE invitations SET revoked_at = now()
-		 WHERE id = $1 AND tenant_id = $2 AND accepted_at IS NULL AND revoked_at IS NULL`,
-		id, tenantID,
+		 WHERE id = $1 AND organization_id = $2 AND accepted_at IS NULL AND revoked_at IS NULL`,
+		id, organizationID,
 	)
 	if err != nil {
 		return fmt.Errorf("identity: revoke invitation: %w", err)
@@ -1118,14 +1118,14 @@ func (r *Repository) RevokeInvitation(ctx context.Context, tenantID, id uuid.UUI
 }
 
 // RevokePendingInvitationFor withdraws any live invitation for an email in a
-// tenant. The service calls it before issuing a new one, so that re-inviting
+// organization. The service calls it before issuing a new one, so that re-inviting
 // somebody replaces their old link instead of colliding with the partial unique
-// index on (tenant_id, email).
-func (r *Repository) RevokePendingInvitationFor(ctx context.Context, tenantID uuid.UUID, email string) error {
+// index on (organization_id, email).
+func (r *Repository) RevokePendingInvitationFor(ctx context.Context, organizationID uuid.UUID, email string) error {
 	_, err := r.db.Exec(ctx,
 		`UPDATE invitations SET revoked_at = now()
-		 WHERE tenant_id = $1 AND email = $2 AND accepted_at IS NULL AND revoked_at IS NULL`,
-		tenantID, email,
+		 WHERE organization_id = $1 AND email = $2 AND accepted_at IS NULL AND revoked_at IS NULL`,
+		organizationID, email,
 	)
 	if err != nil {
 		return fmt.Errorf("identity: revoke pending invitation: %w", err)
@@ -1166,15 +1166,15 @@ func scanUserOrNotFound(r row, op string) (User, error) {
 	return u, nil
 }
 
-func scanTenant(r row) (Tenant, error) {
-	var t Tenant
+func scanOrganization(r row) (Organization, error) {
+	var t Organization
 	err := r.Scan(&t.ID, &t.Slug, &t.Name, &t.DeletedAt, &t.CreatedAt, &t.UpdatedAt)
 	return t, err
 }
 
 func scanMembership(r row) (Membership, error) {
 	var m Membership
-	err := r.Scan(&m.ID, &m.UserID, &m.TenantID, &m.CreatedAt, &m.UpdatedAt)
+	err := r.Scan(&m.ID, &m.UserID, &m.OrganizationID, &m.CreatedAt, &m.UpdatedAt)
 	return m, err
 }
 
@@ -1345,48 +1345,48 @@ func (r *Repository) DeleteDeadEmailVerifications(ctx context.Context, retain ti
 	return tag.RowsAffected(), nil
 }
 
-// ---------------------------------------------------------------- tenant purge
+// ---------------------------------------------------------------- organization purge
 
-// CountTenantsForUser returns how many LIVE tenants the user belongs to. The cap on
-// tenant creation is checked against it.
-func (r *Repository) CountTenantsForUser(ctx context.Context, userID uuid.UUID) (int, error) {
+// CountOrganizationsForUser returns how many LIVE organizations the user belongs to. The cap on
+// organization creation is checked against it.
+func (r *Repository) CountOrganizationsForUser(ctx context.Context, userID uuid.UUID) (int, error) {
 	var n int
 	err := r.db.QueryRow(ctx,
 		`SELECT count(*) FROM memberships m
-		 JOIN tenants t ON t.id = m.tenant_id
-		 WHERE m.user_id = $1 AND t.`+liveTenant,
+		 JOIN organizations t ON t.id = m.organization_id
+		 WHERE m.user_id = $1 AND t.`+liveOrganization,
 		userID,
 	).Scan(&n)
 	if err != nil {
-		return 0, fmt.Errorf("identity: count tenants for user: %w", err)
+		return 0, fmt.Errorf("identity: count organizations for user: %w", err)
 	}
 	return n, nil
 }
 
-// PurgeDeletedTenants HARD-deletes tenants that were soft-deleted longer than retain
+// PurgeDeletedOrganizations HARD-deletes organizations that were soft-deleted longer than retain
 // ago, cascading away every row they own.
 //
 // This is the right-to-erasure path, and it is the only thing in the application
-// that destroys tenant data. It cascades into audit_log, so it must announce itself
+// that destroys organization data. It cascades into audit_log, so it must announce itself
 // to the append-only trigger -- which is why the caller runs it in a transaction
 // that sets app.audit_purge.
 //
 // retain <= 0 means keep forever, which is the default: silently destroying a
 // customer's data because a config value had a tidy default is not a decision this
 // template makes.
-func (r *Repository) PurgeDeletedTenants(ctx context.Context, retain time.Duration) (int64, error) {
+func (r *Repository) PurgeDeletedOrganizations(ctx context.Context, retain time.Duration) (int64, error) {
 	if retain <= 0 {
 		return 0, nil
 	}
 
 	tag, err := r.db.Exec(ctx,
-		`DELETE FROM tenants
+		`DELETE FROM organizations
 		 WHERE deleted_at IS NOT NULL
 		   AND deleted_at < now() - make_interval(secs => $1)`,
 		retain.Seconds(),
 	)
 	if err != nil {
-		return 0, fmt.Errorf("identity: purge deleted tenants: %w", err)
+		return 0, fmt.Errorf("identity: purge deleted organizations: %w", err)
 	}
 	return tag.RowsAffected(), nil
 }

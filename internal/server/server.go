@@ -137,9 +137,9 @@ func (s *Server) routes() http.Handler {
 		// the open-source code -- and a login screen may want it.
 		r.Get("/permissions", s.handleListPermissions)
 
-		// --- Authenticated: a valid session token, but no tenant yet. ---------
+		// --- Authenticated: a valid session token, but no organization yet. ---------
 		// These are the endpoints a user needs before they belong anywhere: see
-		// who they are, list their tenants, make one, or accept an invitation.
+		// who they are, list their organizations, make one, or accept an invitation.
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAuth)
 
@@ -156,11 +156,11 @@ func (s *Server) routes() http.Handler {
 			r.With(s.rateLimit(s.byIP("verify-resend"))).
 				Post("/auth/email/verify/resend", s.handleResendVerification)
 
-			r.Get("/tenants", s.handleListTenants)
-			r.Post("/tenants", s.handleCreateTenant)
+			r.Get("/organizations", s.handleListOrganizations)
+			r.Post("/organizations", s.handleCreateOrganization)
 
-			// Accepting an invitation cannot sit under /tenants/{tenant}: the
-			// caller is not a member yet, so requireTenant would 404 them.
+			// Accepting an invitation cannot sit under /organizations/{organization}: the
+			// caller is not a member yet, so requireOrganization would 404 them.
 			//
 			// Rate limited even though it is authenticated: the token is a bearer
 			// credential in a URL, and this is where somebody would guess at one.
@@ -169,7 +169,7 @@ func (s *Server) routes() http.Handler {
 		})
 
 		// --- Staff: superuser only. -------------------------------------------
-		// The one part of the API that reads across tenants. A non-superuser gets
+		// The one part of the API that reads across organizations. A non-superuser gets
 		// 404 here, not 403 -- the staff surface does not advertise itself.
 		//
 		// There is deliberately no route to GRANT superuser: see the CLI.
@@ -177,45 +177,45 @@ func (s *Server) routes() http.Handler {
 			r.Use(s.requireAuth)
 			r.Use(s.requireSuperuser)
 
-			r.Get("/tenants", s.handleAdminListTenants)
+			r.Get("/organizations", s.handleAdminListOrganizations)
 			r.Get("/users", s.handleAdminListUsers)
 			r.Patch("/users/{userID}", s.handleAdminSetUserActive)
 
-			// Restoring a soft-deleted tenant HAS to live here rather than under
-			// /tenants/{tenant}: a deleted tenant 404s for everyone, its own owners
+			// Restoring a soft-deleted organization HAS to live here rather than under
+			// /organizations/{organization}: a deleted organization 404s for everyone, its own owners
 			// included, so nobody inside it can ask for it back.
-			r.Post("/tenants/{tenantID}/restore", s.handleAdminRestoreTenant)
+			r.Post("/organizations/{organizationID}/restore", s.handleAdminRestoreOrganization)
 		})
 
-		// --- Tenant-scoped: authenticated AND able to act in {tenant}. --------
-		// Everything below requireTenant can trust tenantFrom(ctx) and must scope
+		// --- Organization-scoped: authenticated AND able to act in {organization}. --------
+		// Everything below requireOrganization can trust organizationFrom(ctx) and must scope
 		// every query to it. This is where your own resources go.
 		//
 		// Each route names the ONE permission it needs. Read the block top to
 		// bottom and you have the application's entire authorization policy --
 		// which is the point of putting it here rather than scattering checks
 		// through the handlers.
-		r.Route("/tenants/{tenant}", func(r chi.Router) {
+		r.Route("/organizations/{organization}", func(r chi.Router) {
 			r.Use(s.requireAuth)
-			r.Use(s.requireTenant)
+			r.Use(s.requireOrganization)
 
-			// The tenant itself. PATCH changes the NAME; the slug is immutable and a
+			// The organization itself. PATCH changes the NAME; the slug is immutable and a
 			// request that tries to change it is refused -- it lives in your
 			// customers' bookmarks and webhook configs. DELETE is a SOFT delete:
 			// invisible to everyone at once, nothing destroyed, restorable by a
 			// superuser.
-			r.With(s.requirePermission(identity.PermTenantRead)).
-				Get("/", s.handleGetTenant)
-			r.With(s.requirePermission(identity.PermTenantUpdate)).
-				Patch("/", s.handleUpdateTenant)
-			r.With(s.requirePermission(identity.PermTenantDelete)).
-				Delete("/", s.handleDeleteTenant)
+			r.With(s.requirePermission(identity.PermOrganizationRead)).
+				Get("/", s.handleGetOrganization)
+			r.With(s.requirePermission(identity.PermOrganizationUpdate)).
+				Patch("/", s.handleUpdateOrganization)
+			r.With(s.requirePermission(identity.PermOrganizationDelete)).
+				Delete("/", s.handleDeleteOrganization)
 
 			// Leaving is not a permission: any member may walk out, and requiring
-			// members.delete to leave would trap a plain member in a tenant forever.
+			// members.delete to leave would trap a plain member in an organization forever.
 			// The last-owner rule still applies, so the sole owner gets a 409 telling
 			// them to appoint a successor first.
-			r.Delete("/members/me", s.handleLeaveTenant)
+			r.Delete("/members/me", s.handleLeaveOrganization)
 
 			// Members.
 			r.With(s.requirePermission(identity.PermMembersRead)).

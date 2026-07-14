@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tenant lifecycle + the hardened audit log, over the real HTTP API.
+# Organization lifecycle + the hardened audit log, over the real HTTP API.
 #
 # Overridable so these run against compose OR a plain binary (see .github/workflows):
 #   API_BASE    where the API is            (default http://localhost:8080)
@@ -36,7 +36,7 @@ req() {
 jqr() { jq -r "$1" /tmp/body; }
 logs() { ${APP_LOGS:-docker compose logs app} 2>&1; }
 # Registration now sends a VERIFICATION email, and an unverified address cannot
-# create a tenant. Click the link, exactly as a real user does — with MAIL_BACKEND=log
+# create an organization. Click the link, exactly as a real user does — with MAIL_BACKEND=log
 # the inbox is the application log.
 verify_email() { logs | grep -o 'token=mtt_ver_[A-Za-z0-9_-]*' | tail -1 | cut -d= -f2; }
 reg() {
@@ -44,7 +44,7 @@ reg() {
   req POST /auth/email/verify - "{\"token\":\"$(verify_email)\"}" >/dev/null
 }
 login() { req POST /auth/login - "{\"email\":\"$1\",\"password\":\"correct-horse-battery\"}" >/dev/null; jqr .token; }
-roleid() { req GET /tenants/acme/roles "$1" >/dev/null; jq -r ".roles[]|select(.key==\"$2\").id" /tmp/body; }
+roleid() { req GET /organizations/acme/roles "$1" >/dev/null; jq -r ".roles[]|select(.key==\"$2\").id" /tmp/body; }
 
 echo "== the catalog is now resource.action CRUD =="
 code=$(req GET /permissions -)
@@ -58,30 +58,30 @@ check "invitations.create exists" "true" "$(jq '.permissions|any(.key=="invitati
 echo "== setup =="
 reg alice@example.com; reg mallory@example.com; reg root@example.com
 ALICE=$(login alice@example.com); MALLORY=$(login mallory@example.com)
-req POST /tenants "$ALICE" '{"slug":"acme","name":"Acme Inc"}' >/dev/null
+req POST /organizations "$ALICE" '{"slug":"acme","name":"Acme Inc"}' >/dev/null
 ADMIN_ID=$(roleid "$ALICE" admin)
-req POST /tenants/acme/invitations "$ALICE" "{\"email\":\"mallory@example.com\",\"role_id\":\"$ADMIN_ID\"}" >/dev/null
+req POST /organizations/acme/invitations "$ALICE" "{\"email\":\"mallory@example.com\",\"role_id\":\"$ADMIN_ID\"}" >/dev/null
 TOK=$(invite_token); req POST /invitations/accept "$MALLORY" "{\"token\":\"$TOK\"}" >/dev/null
 
 echo "== the owner really does hold every permission (the bug the tests caught) =="
-code=$(req GET /tenants/acme "$ALICE")
+code=$(req GET /organizations/acme "$ALICE")
 check "owner holds all 14" 14 "$(jq '.permissions|length' /tmp/body)"
 check "  ...including invitations.delete" "true" "$(jq '.permissions|any(.=="invitations.delete")' /tmp/body)"
 
-echo "== tenant update: name only, slug immutable =="
-code=$(req PATCH /tenants/acme "$ALICE" '{"name":"Acme Corporation"}')
-check "owner renames the tenant" 200 "$code"
+echo "== organization update: name only, slug immutable =="
+code=$(req PATCH /organizations/acme "$ALICE" '{"name":"Acme Corporation"}')
+check "owner renames the organization" 200 "$code"
 check "  ...name changed" "Acme Corporation" "$(jqr .name)"
 check "  ...slug unchanged" "acme" "$(jqr .slug)"
-code=$(req PATCH /tenants/acme "$ALICE" '{"slug":"acme-corp"}')
+code=$(req PATCH /organizations/acme "$ALICE" '{"slug":"acme-corp"}')
 check "trying to change the slug -> 400" 400 "$code"
-# The admin role is "everything except tenant.delete", so it DOES hold
-# tenant.update. Renaming is an administrative act, not a destructive one.
-code=$(req PATCH /tenants/acme "$MALLORY" '{"name":"Acme Corporation"}')
-check "admin CAN rename (admin holds tenant.update by design)" 200 "$code"
+# The admin role is "everything except organization.delete", so it DOES hold
+# organization.update. Renaming is an administrative act, not a destructive one.
+code=$(req PATCH /organizations/acme "$MALLORY" '{"name":"Acme Corporation"}')
+check "admin CAN rename (admin holds organization.update by design)" 200 "$code"
 # ...but not destroy. This is the denial we audit below.
-code=$(req DELETE /tenants/acme "$MALLORY")
-check "admin CANNOT delete the tenant -> 403" 403 "$code"
+code=$(req DELETE /organizations/acme "$MALLORY")
+check "admin CANNOT delete the organization -> 403" 403 "$code"
 
 echo "== DENIALS ARE AUDITED =="
 # The 403 above must have left a trace. Successes alone are a change-history;
@@ -91,7 +91,7 @@ n=$(eval $PG "\"SELECT count(*) FROM audit_log WHERE action='access.denied'\"")
                || { echo "  FAIL  the 403 left no audit trace"; fail=$((fail+1)); }
 
 # Escalation attempt.
-req POST /tenants/acme/roles "$MALLORY" '{"key":"backdoor","name":"Backdoor","permissions":["tenant.delete"]}' >/dev/null
+req POST /organizations/acme/roles "$MALLORY" '{"key":"backdoor","name":"Backdoor","permissions":["organization.delete"]}' >/dev/null
 n=$(eval $PG "\"SELECT count(*) FROM audit_log WHERE action='access.escalation_denied'\"")
 [ "$n" -ge 1 ] && { echo "  PASS  the escalation attempt was recorded ($n)"; pass=$((pass+1)); } \
                || { echo "  FAIL  the escalation attempt left no trace"; fail=$((fail+1)); }
@@ -127,50 +127,50 @@ echo "$out" | grep -q 'append-only' && { echo "  PASS  TRUNCATE refused (the byp
                                     || { echo "  FAIL  TRUNCATE was allowed: $out"; fail=$((fail+1)); }
 
 echo "== audit search =="
-code=$(req GET "/tenants/acme/audit?action=tenants.updated" "$ALICE")
+code=$(req GET "/organizations/acme/audit?action=organizations.updated" "$ALICE")
 check "filter by action" 200 "$code"
 check "  ...2 renames recorded (alice + mallory)" 2 "$(jq '.entries|length' /tmp/body)"
 ALICE_ID=$(req GET /auth/me "$ALICE" >/dev/null; jqr .id)
-code=$(req GET "/tenants/acme/audit?actor=$ALICE_ID" "$ALICE")
+code=$(req GET "/organizations/acme/audit?actor=$ALICE_ID" "$ALICE")
 check "filter by actor" 200 "$code"
-code=$(req GET "/tenants/acme/audit?action=no.such.action" "$ALICE")
+code=$(req GET "/organizations/acme/audit?action=no.such.action" "$ALICE")
 check "an unknown action matches nothing" 0 "$(jq '.entries|length' /tmp/body)"
-code=$(req GET "/tenants/acme/audit?from=not-a-date" "$ALICE")
+code=$(req GET "/organizations/acme/audit?from=not-a-date" "$ALICE")
 check "a malformed date -> 400" 400 "$code"
 
 echo "== SOFT DELETE =="
-code=$(req DELETE /tenants/acme "$MALLORY")
-check "admin deleting the tenant (lacks tenant.delete) -> 403" 403 "$code"
-code=$(req DELETE /tenants/acme "$ALICE")
-check "owner soft-deletes the tenant" 204 "$code"
-code=$(req GET /tenants/acme "$ALICE")
+code=$(req DELETE /organizations/acme "$MALLORY")
+check "admin deleting the organization (lacks organization.delete) -> 403" 403 "$code"
+code=$(req DELETE /organizations/acme "$ALICE")
+check "owner soft-deletes the organization" 204 "$code"
+code=$(req GET /organizations/acme "$ALICE")
 check "  ...now 404 for its own OWNER" 404 "$code"
-code=$(req GET /tenants/acme "$MALLORY")
+code=$(req GET /organizations/acme "$MALLORY")
 check "  ...404 for its members" 404 "$code"
-code=$(req GET /tenants "$ALICE")
-check "  ...gone from the owner's tenant list" 0 "$(jq '.tenants|length' /tmp/body)"
+code=$(req GET /organizations "$ALICE")
+check "  ...gone from the owner's organization list" 0 "$(jq '.organizations|length' /tmp/body)"
 n=$(eval $PG "\"SELECT count(*) FROM memberships\"")
 check "  ...but the memberships survive" 2 "$n"
 
 echo "== the slug is freed, and restore copes =="
 BOB=$(reg bob@example.com; login bob@example.com)
-code=$(req POST /tenants "$BOB" '{"slug":"acme","name":"Bob Acme"}')
+code=$(req POST /organizations "$BOB" '{"slug":"acme","name":"Bob Acme"}')
 check "somebody else can claim the freed slug" 201 "$code"
 
 ${SERVER_CMD:-docker compose exec -T app /app/server} grant-superuser root@example.com >/dev/null 2>&1
 ROOT=$(login root@example.com)
-code=$(req GET /admin/tenants "$ROOT")
-check "superuser sees the deleted tenant" 200 "$code"
-DEL_ID=$(jq -r '.tenants[]|select(.tenant.deleted_at != null).tenant.id' /tmp/body)
-check "  ...flagged as deleted" "true" "$(jq --arg id "$DEL_ID" '[.tenants[]|select(.tenant.id==$id)][0].tenant.deleted_at != null' /tmp/body)"
+code=$(req GET /admin/organizations "$ROOT")
+check "superuser sees the deleted organization" 200 "$code"
+DEL_ID=$(jq -r '.organizations[]|select(.organization.deleted_at != null).organization.id' /tmp/body)
+check "  ...flagged as deleted" "true" "$(jq --arg id "$DEL_ID" '[.organizations[]|select(.organization.id==$id)][0].organization.deleted_at != null' /tmp/body)"
 
-code=$(req POST "/admin/tenants/$DEL_ID/restore" "$ROOT" '{}')
+code=$(req POST "/admin/organizations/$DEL_ID/restore" "$ROOT" '{}')
 check "restoring under the now-taken slug -> 409" 409 "$code"
-code=$(req POST "/admin/tenants/$DEL_ID/restore" "$ROOT" '{"slug":"acme-original"}')
+code=$(req POST "/admin/organizations/$DEL_ID/restore" "$ROOT" '{"slug":"acme-original"}')
 check "restoring under a new slug" 200 "$code"
 check "  ...new slug" "acme-original" "$(jqr .slug)"
-code=$(req GET /tenants/acme-original "$ALICE")
-check "the owner has her tenant back" 200 "$code"
+code=$(req GET /organizations/acme-original "$ALICE")
+check "the owner has her organization back" 200 "$code"
 check "  ...still owner, whole" "true" "$(jq '.roles|any(.key=="owner")' /tmp/body)"
 check "  ...with all 14 permissions" 14 "$(jq '.permissions|length' /tmp/body)"
 

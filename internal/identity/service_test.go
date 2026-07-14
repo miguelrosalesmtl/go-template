@@ -165,7 +165,7 @@ func TestChangePasswordRevokesEverySession(t *testing.T) {
 	})
 }
 
-func TestCreateTenantMakesTheCreatorOwner(t *testing.T) {
+func TestCreateOrganizationMakesTheCreatorOwner(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
@@ -174,23 +174,23 @@ func TestCreateTenantMakesTheCreatorOwner(t *testing.T) {
 		t.Fatalf("register: %v", err)
 	}
 
-	tenant, err := svc.CreateTenant(ctx, alice, "acme", "Acme Inc")
+	organization, err := svc.CreateOrganization(ctx, alice, "acme", "Acme Inc")
 	if err != nil {
-		t.Fatalf("create tenant: %v", err)
+		t.Fatalf("create organization: %v", err)
 	}
 
-	// The tenant and the owning membership are created in one transaction; a
-	// tenant with no owner would be unadministrable by anyone, including its
+	// The organization and the owning membership are created in one transaction; a
+	// organization with no owner would be unadministrable by anyone, including its
 	// creator.
-	access, err := svc.ResolveTenant(ctx, alice, tenant.Slug)
+	access, err := svc.ResolveOrganization(ctx, alice, organization.Slug)
 	if err != nil {
-		t.Fatalf("the creator cannot resolve their own tenant: %v", err)
+		t.Fatalf("the creator cannot resolve their own organization: %v", err)
 	}
 	if !hasOwnerRole(access.Roles) {
 		t.Errorf("the creator holds %v, want the owner role", roleKeys(access.Roles))
 	}
 	// The owner role carries every permission in the catalog, so the creator can
-	// do anything in their own tenant.
+	// do anything in their own organization.
 	if !access.Permissions.Superset(AllPermissions()) {
 		t.Errorf("the owner lacks %v", access.Permissions.Missing(AllPermissions()))
 	}
@@ -199,7 +199,7 @@ func TestCreateTenantMakesTheCreatorOwner(t *testing.T) {
 	}
 
 	t.Run("a duplicate slug is rejected", func(t *testing.T) {
-		if _, err := svc.CreateTenant(ctx, alice, "acme", "Acme Again"); !errors.Is(err, ErrSlugTaken) {
+		if _, err := svc.CreateOrganization(ctx, alice, "acme", "Acme Again"); !errors.Is(err, ErrSlugTaken) {
 			t.Errorf("got %v, want ErrSlugTaken", err)
 		}
 	})
@@ -216,7 +216,7 @@ func TestCreateTenantMakesTheCreatorOwner(t *testing.T) {
 			"api",        // reserved: would collide with a route
 			"admin",      // reserved
 		} {
-			if _, err := svc.CreateTenant(ctx, alice, slug, "Name"); !errors.Is(err, ErrValidation) {
+			if _, err := svc.CreateOrganization(ctx, alice, slug, "Name"); !errors.Is(err, ErrValidation) {
 				t.Errorf("slug %q: got %v, want ErrValidation", slug, err)
 			}
 		}
@@ -225,12 +225,12 @@ func TestCreateTenantMakesTheCreatorOwner(t *testing.T) {
 	// Case and surrounding space are normalised away rather than rejected: the
 	// slug goes into a URL, and "Globex " is obviously meant to be "globex".
 	t.Run("slugs are normalised, not rejected, for case and space", func(t *testing.T) {
-		tenant, err := svc.CreateTenant(ctx, alice, "  GlobEx  ", "Globex Corp")
+		organization, err := svc.CreateOrganization(ctx, alice, "  GlobEx  ", "Globex Corp")
 		if err != nil {
-			t.Fatalf("create tenant with a messy slug: %v", err)
+			t.Fatalf("create organization with a messy slug: %v", err)
 		}
-		if tenant.Slug != "globex" {
-			t.Errorf("slug is %q, want it lowercased and trimmed to %q", tenant.Slug, "globex")
+		if organization.Slug != "globex" {
+			t.Errorf("slug is %q, want it lowercased and trimmed to %q", organization.Slug, "globex")
 		}
 	})
 }

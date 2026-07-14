@@ -12,32 +12,32 @@ import (
 
 // Everything that reads or writes roles and their permissions.
 //
-// THE TENANT-SCOPING RULE APPLIES HERE TOO, with a twist: a role is visible to a
-// tenant if it is a system role (tenant_id IS NULL, shared by everyone) OR it
-// belongs to that tenant. That disjunction appears in every WHERE clause below,
-// and it is what stops tenant A from assigning, editing, or deleting tenant B's
+// THE ORGANIZATION-SCOPING RULE APPLIES HERE TOO, with a twist: a role is visible to a
+// organization if it is a system role (organization_id IS NULL, shared by everyone) OR it
+// belongs to that organization. That disjunction appears in every WHERE clause below,
+// and it is what stops organization A from assigning, editing, or deleting organization B's
 // custom role by guessing its id.
 
 // roleColumns is qualified with the alias "r" because every one of these queries
 // joins roles against role_permissions, and both tables have an id.
-const roleColumns = `r.id, r.tenant_id, r.key, r.name, r.is_system, r.created_at, r.updated_at`
+const roleColumns = `r.id, r.organization_id, r.key, r.name, r.is_system, r.created_at, r.updated_at`
 
-// visibleToTenant is the predicate that decides whether a tenant may see a role:
-// system roles are shared by all, custom roles belong to exactly one tenant.
-const visibleToTenant = `(r.tenant_id IS NULL OR r.tenant_id = $1)`
+// visibleToOrganization is the predicate that decides whether an organization may see a role:
+// system roles are shared by all, custom roles belong to exactly one organization.
+const visibleToOrganization = `(r.organization_id IS NULL OR r.organization_id = $1)`
 
-// ListRoles returns every role the tenant can use -- the three system roles plus
+// ListRoles returns every role the organization can use -- the three system roles plus
 // its own custom ones -- each with its permissions.
-func (r *Repository) ListRoles(ctx context.Context, tenantID uuid.UUID) ([]Role, error) {
+func (r *Repository) ListRoles(ctx context.Context, organizationID uuid.UUID) ([]Role, error) {
 	// LEFT JOIN, not JOIN: a role with no permissions yet is still a role, and an
 	// inner join would make it vanish from the list.
 	rows, err := r.db.Query(ctx,
 		`SELECT `+roleColumns+`, rp.permission
 		 FROM roles r
 		 LEFT JOIN role_permissions rp ON rp.role_id = r.id
-		 WHERE `+visibleToTenant+`
+		 WHERE `+visibleToOrganization+`
 		 ORDER BY r.is_system DESC, r.key`,
-		tenantID,
+		organizationID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("identity: list roles: %w", err)
@@ -47,15 +47,15 @@ func (r *Repository) ListRoles(ctx context.Context, tenantID uuid.UUID) ([]Role,
 	return collectRoles(rows)
 }
 
-// GetRole returns one role, but only if the tenant may see it. A role belonging
-// to another tenant is ErrNotFound, exactly as if it did not exist.
-func (r *Repository) GetRole(ctx context.Context, tenantID, roleID uuid.UUID) (Role, error) {
+// GetRole returns one role, but only if the organization may see it. A role belonging
+// to another organization is ErrNotFound, exactly as if it did not exist.
+func (r *Repository) GetRole(ctx context.Context, organizationID, roleID uuid.UUID) (Role, error) {
 	rows, err := r.db.Query(ctx,
 		`SELECT `+roleColumns+`, rp.permission
 		 FROM roles r
 		 LEFT JOIN role_permissions rp ON rp.role_id = r.id
-		 WHERE `+visibleToTenant+` AND r.id = $2`,
-		tenantID, roleID,
+		 WHERE `+visibleToOrganization+` AND r.id = $2`,
+		organizationID, roleID,
 	)
 	if err != nil {
 		return Role{}, fmt.Errorf("identity: get role: %w", err)
@@ -72,15 +72,15 @@ func (r *Repository) GetRole(ctx context.Context, tenantID, roleID uuid.UUID) (R
 	return roles[0], nil
 }
 
-// GetRoleByKey resolves a role by its key within a tenant, checking the tenant's
-// own roles and the system roles. Used to find "owner" and to seed a new tenant.
-func (r *Repository) GetRoleByKey(ctx context.Context, tenantID uuid.UUID, key string) (Role, error) {
+// GetRoleByKey resolves a role by its key within an organization, checking the organization's
+// own roles and the system roles. Used to find "owner" and to seed a new organization.
+func (r *Repository) GetRoleByKey(ctx context.Context, organizationID uuid.UUID, key string) (Role, error) {
 	rows, err := r.db.Query(ctx,
 		`SELECT `+roleColumns+`, rp.permission
 		 FROM roles r
 		 LEFT JOIN role_permissions rp ON rp.role_id = r.id
-		 WHERE `+visibleToTenant+` AND r.key = $2`,
-		tenantID, key,
+		 WHERE `+visibleToOrganization+` AND r.key = $2`,
+		organizationID, key,
 	)
 	if err != nil {
 		return Role{}, fmt.Errorf("identity: get role by key: %w", err)
@@ -97,13 +97,13 @@ func (r *Repository) GetRoleByKey(ctx context.Context, tenantID uuid.UUID, key s
 	return roles[0], nil
 }
 
-// GetRolesByIDs resolves a set of role ids, but ONLY those the tenant may see.
+// GetRolesByIDs resolves a set of role ids, but ONLY those the organization may see.
 //
 // If any requested id is missing -- because it does not exist, or because it
-// belongs to another tenant -- this returns ErrNotFound rather than silently
+// belongs to another organization -- this returns ErrNotFound rather than silently
 // assigning the subset it could find. That strictness is the point: an admin of
-// tenant A passing tenant B's role id must fail, not quietly get a shorter list.
-func (r *Repository) GetRolesByIDs(ctx context.Context, tenantID uuid.UUID, ids []uuid.UUID) ([]Role, error) {
+// organization A passing organization B's role id must fail, not quietly get a shorter list.
+func (r *Repository) GetRolesByIDs(ctx context.Context, organizationID uuid.UUID, ids []uuid.UUID) ([]Role, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -112,9 +112,9 @@ func (r *Repository) GetRolesByIDs(ctx context.Context, tenantID uuid.UUID, ids 
 		`SELECT `+roleColumns+`, rp.permission
 		 FROM roles r
 		 LEFT JOIN role_permissions rp ON rp.role_id = r.id
-		 WHERE `+visibleToTenant+` AND r.id = ANY($2)
+		 WHERE `+visibleToOrganization+` AND r.id = ANY($2)
 		 ORDER BY r.is_system DESC, r.key`,
-		tenantID, ids,
+		organizationID, ids,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("identity: get roles by ids: %w", err)
@@ -142,18 +142,18 @@ func (r *Repository) GetRolesByIDs(ctx context.Context, tenantID uuid.UUID, ids 
 // transaction: a role that committed without its permissions would be a role
 // that grants nothing.
 func (r *Repository) CreateRole(
-	ctx context.Context, tenantID uuid.UUID, key, name string, perms PermissionSet,
+	ctx context.Context, organizationID uuid.UUID, key, name string, perms PermissionSet,
 ) (Role, error) {
 	var role Role
 	err := r.db.QueryRow(ctx,
-		`INSERT INTO roles (tenant_id, key, name, is_system)
+		`INSERT INTO roles (organization_id, key, name, is_system)
 		 VALUES ($1, $2, $3, false)
-		 RETURNING id, tenant_id, key, name, is_system, created_at, updated_at`,
-		tenantID, key, name,
-	).Scan(&role.ID, &role.TenantID, &role.Key, &role.Name, &role.IsSystem,
+		 RETURNING id, organization_id, key, name, is_system, created_at, updated_at`,
+		organizationID, key, name,
+	).Scan(&role.ID, &role.OrganizationID, &role.Key, &role.Name, &role.IsSystem,
 		&role.CreatedAt, &role.UpdatedAt)
 
-	if isUniqueViolation(err, "roles_tenant_key_idx") {
+	if isUniqueViolation(err, "roles_organization_key_idx") {
 		return Role{}, ErrRoleKeyTaken
 	}
 	if err != nil {
@@ -169,18 +169,18 @@ func (r *Repository) CreateRole(
 
 // UpdateRole renames a custom role and replaces its permission set wholesale.
 //
-// tenant_id is in the WHERE clause AND is_system is excluded, so this can touch
-// neither another tenant's role nor a system role.
+// organization_id is in the WHERE clause AND is_system is excluded, so this can touch
+// neither another organization's role nor a system role.
 func (r *Repository) UpdateRole(
-	ctx context.Context, tenantID, roleID uuid.UUID, name string, perms PermissionSet,
+	ctx context.Context, organizationID, roleID uuid.UUID, name string, perms PermissionSet,
 ) (Role, error) {
 	var role Role
 	err := r.db.QueryRow(ctx,
 		`UPDATE roles SET name = $3, updated_at = now()
-		 WHERE id = $2 AND tenant_id = $1 AND NOT is_system
-		 RETURNING id, tenant_id, key, name, is_system, created_at, updated_at`,
-		tenantID, roleID, name,
-	).Scan(&role.ID, &role.TenantID, &role.Key, &role.Name, &role.IsSystem,
+		 WHERE id = $2 AND organization_id = $1 AND NOT is_system
+		 RETURNING id, organization_id, key, name, is_system, created_at, updated_at`,
+		organizationID, roleID, name,
+	).Scan(&role.ID, &role.OrganizationID, &role.Key, &role.Name, &role.IsSystem,
 		&role.CreatedAt, &role.UpdatedAt)
 
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -200,15 +200,15 @@ func (r *Repository) UpdateRole(
 	return role, nil
 }
 
-// DeleteRole removes a custom role belonging to this tenant.
+// DeleteRole removes a custom role belonging to this organization.
 //
 // membership_roles.role_id is ON DELETE RESTRICT, so if anybody still holds the
 // role, Postgres refuses and this returns ErrRoleInUse. Deleting a role should
 // not silently strip people's access as a side effect.
-func (r *Repository) DeleteRole(ctx context.Context, tenantID, roleID uuid.UUID) error {
+func (r *Repository) DeleteRole(ctx context.Context, organizationID, roleID uuid.UUID) error {
 	tag, err := r.db.Exec(ctx,
-		`DELETE FROM roles WHERE id = $2 AND tenant_id = $1 AND NOT is_system`,
-		tenantID, roleID,
+		`DELETE FROM roles WHERE id = $2 AND organization_id = $1 AND NOT is_system`,
+		organizationID, roleID,
 	)
 	if isForeignKeyViolation(err, "membership_roles_role_id_fkey") {
 		return ErrRoleInUse
@@ -250,14 +250,14 @@ func (r *Repository) replaceRolePermissions(ctx context.Context, roleID uuid.UUI
 
 // ---------------------------------------------------------------- assignment
 
-// LoadMemberRoles returns the roles a user holds in a tenant, with their
+// LoadMemberRoles returns the roles a user holds in an organization, with their
 // permissions.
 //
 // It returns ErrNotFound when there is no membership at all -- which is the
-// authorization check every tenant-scoped request performs. A membership that
+// authorization check every organization-scoped request performs. A membership that
 // exists but holds no roles yields an empty slice, not an error; the service
 // forbids creating that state, but the repository reports honestly what it finds.
-func (r *Repository) LoadMemberRoles(ctx context.Context, userID, tenantID uuid.UUID) ([]Role, error) {
+func (r *Repository) LoadMemberRoles(ctx context.Context, userID, organizationID uuid.UUID) ([]Role, error) {
 	// The LEFT JOINs hang off memberships, so a member with no roles still
 	// produces one row (with NULLs) and is distinguishable from a non-member,
 	// who produces none.
@@ -267,9 +267,9 @@ func (r *Repository) LoadMemberRoles(ctx context.Context, userID, tenantID uuid.
 		 LEFT JOIN membership_roles mr ON mr.membership_id = m.id
 		 LEFT JOIN roles r            ON r.id = mr.role_id
 		 LEFT JOIN role_permissions rp ON rp.role_id = r.id
-		 WHERE m.user_id = $2 AND m.tenant_id = $1
+		 WHERE m.user_id = $2 AND m.organization_id = $1
 		 ORDER BY r.is_system DESC, r.key`,
-		tenantID, userID,
+		organizationID, userID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("identity: load member roles: %w", err)
@@ -281,7 +281,7 @@ func (r *Repository) LoadMemberRoles(ctx context.Context, userID, tenantID uuid.
 		return nil, err
 	}
 	if !any {
-		return nil, ErrNotFound // no membership: not a member of this tenant
+		return nil, ErrNotFound // no membership: not a member of this organization
 	}
 	return roles, nil
 }
@@ -306,20 +306,20 @@ func (r *Repository) SetMembershipRoles(ctx context.Context, membershipID uuid.U
 	return nil
 }
 
-// CountOwners returns how many members hold the system owner role in this tenant.
+// CountOwners returns how many members hold the system owner role in this organization.
 //
-// Call it inside the same transaction as the write it guards, after LockTenant,
+// Call it inside the same transaction as the write it guards, after LockOrganization,
 // or two concurrent requests each removing one of the last two owners will both
 // see a count of 2 and both succeed.
-func (r *Repository) CountOwners(ctx context.Context, tenantID uuid.UUID) (int, error) {
+func (r *Repository) CountOwners(ctx context.Context, organizationID uuid.UUID) (int, error) {
 	var n int
 	err := r.db.QueryRow(ctx,
 		`SELECT count(DISTINCT m.id)
 		 FROM memberships m
 		 JOIN membership_roles mr ON mr.membership_id = m.id
 		 JOIN roles r             ON r.id = mr.role_id
-		 WHERE m.tenant_id = $1 AND r.is_system AND r.key = $2`,
-		tenantID, RoleKeyOwner,
+		 WHERE m.organization_id = $1 AND r.is_system AND r.key = $2`,
+		organizationID, RoleKeyOwner,
 	).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("identity: count owners: %w", err)
@@ -353,13 +353,13 @@ func collectRolesNullable(rows pgx.Rows) (out []Role, anyRow bool, err error) {
 		// Every column is scanned into a pointer, because a LEFT JOIN that matched
 		// nothing yields NULLs across the whole right-hand side.
 		var (
-			id, tenantID         *uuid.UUID
+			id, organizationID   *uuid.UUID
 			key, name            *string
 			isSystem             *bool
 			createdAt, updatedAt *time.Time
 			perm                 *Permission
 		)
-		if err := rows.Scan(&id, &tenantID, &key, &name, &isSystem, &createdAt, &updatedAt, &perm); err != nil {
+		if err := rows.Scan(&id, &organizationID, &key, &name, &isSystem, &createdAt, &updatedAt, &perm); err != nil {
 			return nil, false, fmt.Errorf("identity: scan role: %w", err)
 		}
 		if id == nil {
@@ -369,14 +369,14 @@ func collectRolesNullable(rows pgx.Rows) (out []Role, anyRow bool, err error) {
 		role, seen := byID[*id]
 		if !seen {
 			role = &Role{
-				ID:          *id,
-				TenantID:    tenantID,
-				Key:         *key,
-				Name:        *name,
-				IsSystem:    *isSystem,
-				Permissions: PermissionSet{},
-				CreatedAt:   *createdAt,
-				UpdatedAt:   *updatedAt,
+				ID:             *id,
+				OrganizationID: organizationID,
+				Key:            *key,
+				Name:           *name,
+				IsSystem:       *isSystem,
+				Permissions:    PermissionSet{},
+				CreatedAt:      *createdAt,
+				UpdatedAt:      *updatedAt,
 			}
 			byID[*id] = role
 			order = append(order, *id)

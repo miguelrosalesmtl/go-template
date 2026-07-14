@@ -26,7 +26,7 @@ import (
 
 // These are integration tests: they run against a real Postgres, because what
 // they are checking IS the SQL. A mocked database would happily "prove" that a
-// query with a missing tenant_id filter is correctly isolated, which is exactly
+// query with a missing organization_id filter is correctly isolated, which is exactly
 // the bug they exist to catch.
 //
 // Run them with:  make test-integration
@@ -100,12 +100,12 @@ func requireDB(t *testing.T) {
 // These are explicit, ordered DELETEs rather than a TRUNCATE ... CASCADE, and
 // that is not fussiness. TRUNCATE CASCADE truncates every table that references
 // the target -- the whole TABLE, not merely the referencing rows -- so
-// `TRUNCATE tenants CASCADE` would empty `roles`, taking the seeded SYSTEM roles
+// `TRUNCATE organizations CASCADE` would empty `roles`, taking the seeded SYSTEM roles
 // and, through them, the permission catalog's grants with it. Every subsequent
 // test would then fail to find the owner role.
 //
-// So: delete the tenant-owned data, and leave the catalog and the system roles
-// (tenant_id IS NULL) exactly as the migration seeded them.
+// So: delete the organization-owned data, and leave the catalog and the system roles
+// (organization_id IS NULL) exactly as the migration seeded them.
 func newTestService(t *testing.T) *Service {
 	t.Helper()
 	requireDB(t)
@@ -118,7 +118,7 @@ func newTestService(t *testing.T) *Service {
 	// is now nailed down:
 	//
 	//   * `DELETE FROM audit_log` is refused outright by the trigger.
-	//   * `DELETE FROM tenants` CASCADES into audit_log, so it is refused too.
+	//   * `DELETE FROM organizations` CASCADES into audit_log, so it is refused too.
 	//   * `DELETE FROM users` sets audit_log.actor_user_id to NULL, which is an
 	//     UPDATE -- permitted, but only because the trigger makes a precise
 	//     exception for that one anonymising change.
@@ -139,9 +139,9 @@ func newTestService(t *testing.T) *Service {
 			`DELETE FROM invitations`,
 			`DELETE FROM memberships`,
 			`DELETE FROM sessions`,
-			`DELETE FROM role_permissions WHERE role_id IN (SELECT id FROM roles WHERE tenant_id IS NOT NULL)`,
-			`DELETE FROM roles WHERE tenant_id IS NOT NULL`, // custom roles only; keep the system ones
-			`DELETE FROM tenants`,
+			`DELETE FROM role_permissions WHERE role_id IN (SELECT id FROM roles WHERE organization_id IS NOT NULL)`,
+			`DELETE FROM roles WHERE organization_id IS NOT NULL`, // custom roles only; keep the system ones
+			`DELETE FROM organizations`,
 			`DELETE FROM users`,
 		} {
 			if _, err := db.Exec(ctx, stmt); err != nil {
@@ -226,13 +226,13 @@ func tokenFromLink(t *testing.T, body string) string {
 
 // ---------------------------------------------------------------- RBAC helpers
 
-// accessFor resolves a user's authority in a tenant, exactly as the HTTP
-// middleware does. Every RBAC rule takes a TenantAccess, so the tests build one
+// accessFor resolves a user's authority in an organization, exactly as the HTTP
+// middleware does. Every RBAC rule takes an OrganizationAccess, so the tests build one
 // the same way production does rather than fabricating it.
-func accessFor(t *testing.T, svc *Service, user User, slug string) TenantAccess {
+func accessFor(t *testing.T, svc *Service, user User, slug string) OrganizationAccess {
 	t.Helper()
 
-	access, err := svc.ResolveTenant(context.Background(), user, slug)
+	access, err := svc.ResolveOrganization(context.Background(), user, slug)
 	if err != nil {
 		t.Fatalf("resolve %s for %s: %v", slug, user.Email, err)
 	}
@@ -240,11 +240,11 @@ func accessFor(t *testing.T, svc *Service, user User, slug string) TenantAccess 
 }
 
 // systemRoleID returns the id of one of the three system roles, which every
-// tenant shares.
-func systemRoleID(t *testing.T, svc *Service, tenantID uuid.UUID, key string) uuid.UUID {
+// organization shares.
+func systemRoleID(t *testing.T, svc *Service, organizationID uuid.UUID, key string) uuid.UUID {
 	t.Helper()
 
-	role, err := svc.repo.GetRoleByKey(context.Background(), tenantID, key)
+	role, err := svc.repo.GetRoleByKey(context.Background(), organizationID, key)
 	if err != nil {
 		t.Fatalf("get system role %q: %v", key, err)
 	}
@@ -263,13 +263,13 @@ func testAuthSettings() settings.Auth {
 		PasswordResetTTL:  1 * time.Hour,
 		EmailVerifyTTL:    24 * time.Hour,
 		MinPasswordLength: 12,
-		// The tests create tenants constantly, so the gate and the cap must be off
+		// The tests create organizations constantly, so the gate and the cap must be off
 		// unless a test is specifically exercising them (which TestEmailVerification
-		// and TestTenantCap do, with their own settings).
-		RequireVerifiedEmail: false,
-		MaxTenantsPerUser:    0,
-		ArgonMemoryKiB:       64,
-		ArgonIterations:      1,
-		ArgonParallelism:     1,
+		// and TestOrganizationCap do, with their own settings).
+		RequireVerifiedEmail:    false,
+		MaxOrganizationsPerUser: 0,
+		ArgonMemoryKiB:          64,
+		ArgonIterations:         1,
+		ArgonParallelism:        1,
 	}
 }

@@ -4,7 +4,7 @@
 --
 -- The old catalog grew three naming philosophies in ten permissions:
 --
---   tenant.read / tenant.update / tenant.delete    CRUD
+--   organization.read / organization.update / organization.delete    CRUD
 --   members.invite / members.remove                ad-hoc verbs
 --   roles.manage                                   one key silently meaning three
 --
@@ -13,20 +13,20 @@
 -- resource means adding <resource>.create/read/update/delete, and a developer
 -- never has to invent a verb -- nor a customer guess what "manage" covers.
 --
--- Note the deliberate absence of tenant.create. Every permission here is checked
--- INSIDE a tenant (requirePermission runs after requireTenant, against the roles
--- you hold there). Creating a tenant happens when you are not in one yet, so
--- there is nothing to hold a permission against; POST /tenants is guarded by
+-- Note the deliberate absence of organization.create. Every permission here is checked
+-- INSIDE an organization (requirePermission runs after requireOrganization, against the roles
+-- you hold there). Creating an organization happens when you are not in one yet, so
+-- there is nothing to hold a permission against; POST /organizations is guarded by
 -- authentication alone. Same reason there is no users.create for registration.
 
 -- The new keys. Descriptions are re-synced from the Go catalog at every startup
 -- (Service.SyncPermissions), so these are just enough to satisfy the NOT NULL.
 INSERT INTO permissions (key, description) VALUES
     ('invitations.read',   'View pending invitations'),
-    ('invitations.create', 'Invite people to the tenant'),
+    ('invitations.create', 'Invite people to the organization'),
     ('invitations.delete', 'Revoke a pending invitation'),
     ('members.update',     'Change which roles a member holds'),
-    ('members.delete',     'Remove members from the tenant'),
+    ('members.delete',     'Remove members from the organization'),
     ('roles.create',       'Create custom roles'),
     ('roles.update',       'Edit custom roles'),
     ('roles.delete',       'Delete custom roles')
@@ -89,8 +89,8 @@ WHERE key IN ('members.invite', 'members.remove', 'members.assign_roles', 'roles
 -- +goose Down
 
 INSERT INTO permissions (key, description) VALUES
-    ('members.invite',       'Invite people to the tenant'),
-    ('members.remove',       'Remove members from the tenant'),
+    ('members.invite',       'Invite people to the organization'),
+    ('members.remove',       'Remove members from the organization'),
     ('members.assign_roles', 'Change which roles a member holds'),
     ('roles.manage',         'Create, edit, and delete custom roles')
 ON CONFLICT (key) DO NOTHING;

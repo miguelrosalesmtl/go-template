@@ -18,10 +18,10 @@ import (
 // reset; now it is the foundation the whole account-recovery flow stands on, since
 // a reset is only as trustworthy as the mailbox it goes to.
 //
-// Verification is required to CREATE A TENANT. Not to log in -- locking somebody
+// Verification is required to CREATE AN ORGANIZATION. Not to log in -- locking somebody
 // out of their own account because a verification email went to spam is a support
 // nightmare for very little gain -- but to do the one thing that makes an account
-// worth farming: standing up tenants. It doubles as an abuse control.
+// worth farming: standing up organizations. It doubles as an abuse control.
 
 // SendVerificationEmail mints a verification token and emails it. Called on
 // registration, and again on demand.
@@ -137,7 +137,7 @@ func (s *Service) CleanupEmailVerifications(ctx context.Context, retain time.Dur
 	return s.repo.DeleteDeadEmailVerifications(ctx, retain)
 }
 
-// requireVerifiedEmail is the gate on tenant creation.
+// requireVerifiedEmail is the gate on organization creation.
 //
 // It is configurable because a project doing its own SSO, or one that verifies out
 // of band, has already solved this and should not be told to solve it twice.

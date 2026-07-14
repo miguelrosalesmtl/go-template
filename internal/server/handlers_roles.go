@@ -27,10 +27,10 @@ func (s *Server) handleListPermissions(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"permissions": identity.Catalog})
 }
 
-// handleListRoles returns the roles this tenant can use: the three system roles,
-// which every tenant shares, plus its own custom ones.
+// handleListRoles returns the roles this organization can use: the three system roles,
+// which every organization shares, plus its own custom ones.
 func (s *Server) handleListRoles(w http.ResponseWriter, r *http.Request) {
-	roles, err := s.identity.ListRoles(r.Context(), tenantFrom(r.Context()).ID)
+	roles, err := s.identity.ListRoles(r.Context(), organizationFrom(r.Context()).ID)
 	if err != nil {
 		s.errors.handle(w, r, err)
 		return
@@ -44,7 +44,7 @@ type roleRequest struct {
 	Permissions []identity.Permission `json:"permissions"`
 }
 
-// handleCreateRole builds a custom role for this tenant.
+// handleCreateRole builds a custom role for this organization.
 //
 // Requires roles.manage AND -- enforced in the service -- that the caller already
 // holds every permission they are putting into the new role. Otherwise roles.manage

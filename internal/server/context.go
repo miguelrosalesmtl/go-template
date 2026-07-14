@@ -8,7 +8,7 @@ import (
 
 // contextKey is unexported so no other package can write these keys. That is the
 // whole security property of this file: the only way a request context can come
-// to hold a user or a tenant is by passing through the middleware below, which
+// to hold a user or an organization is by passing through the middleware below, which
 // means a handler that reads one is guaranteed it was authenticated and
 // authorized rather than supplied by the caller.
 type contextKey int
@@ -25,19 +25,19 @@ func withUser(ctx context.Context, u identity.User, s identity.Session) context.
 	return context.WithValue(ctx, sessionKey, s)
 }
 
-// withTenant attaches the caller's resolved authority in the request's tenant.
-// Called only by requireTenant.
-func withTenant(ctx context.Context, access identity.TenantAccess) context.Context {
+// withOrganization attaches the caller's resolved authority in the request's organization.
+// Called only by requireOrganization.
+func withOrganization(ctx context.Context, access identity.OrganizationAccess) context.Context {
 	return context.WithValue(ctx, accessKey, access)
 }
 
-// accessFrom returns the caller's full authority in the request's tenant,
+// accessFrom returns the caller's full authority in the request's organization,
 // including whether it came from a membership or the superuser bypass. Most
-// handlers want tenantFrom or roleFrom instead.
-func accessFrom(ctx context.Context) identity.TenantAccess {
-	a, ok := ctx.Value(accessKey).(identity.TenantAccess)
+// handlers want organizationFrom or roleFrom instead.
+func accessFrom(ctx context.Context) identity.OrganizationAccess {
+	a, ok := ctx.Value(accessKey).(identity.OrganizationAccess)
 	if !ok {
-		panic("server: no tenant access in context -- this route is missing the requireTenant middleware")
+		panic("server: no organization access in context -- this route is missing the requireOrganization middleware")
 	}
 	return a
 }
@@ -66,10 +66,10 @@ func sessionFrom(ctx context.Context) identity.Session {
 	return s
 }
 
-// tenantFrom returns the tenant this request is scoped to. Every repository call
-// a handler makes must be filtered by this tenant's ID.
-func tenantFrom(ctx context.Context) identity.Tenant {
-	return accessFrom(ctx).Tenant
+// organizationFrom returns the organization this request is scoped to. Every repository call
+// a handler makes must be filtered by this organization's ID.
+func organizationFrom(ctx context.Context) identity.Organization {
+	return accessFrom(ctx).Organization
 }
 
 // The tryX accessors are the non-panicking variants, for code that runs on paths
@@ -84,8 +84,8 @@ func tryUserFrom(ctx context.Context) (identity.User, bool) {
 	return u, ok
 }
 
-// tryAccessFrom returns the caller's tenant authority, if a tenant was resolved.
-func tryAccessFrom(ctx context.Context) (identity.TenantAccess, bool) {
-	a, ok := ctx.Value(accessKey).(identity.TenantAccess)
+// tryAccessFrom returns the caller's organization authority, if an organization was resolved.
+func tryAccessFrom(ctx context.Context) (identity.OrganizationAccess, bool) {
+	a, ok := ctx.Value(accessKey).(identity.OrganizationAccess)
 	return a, ok
 }

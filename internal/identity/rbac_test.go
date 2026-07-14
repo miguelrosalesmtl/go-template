@@ -9,15 +9,15 @@ import (
 	"github.com/google/uuid"
 )
 
-// joinTenant registers a user and puts them in the tenant, via the real invite +
+// joinOrganization registers a user and puts them in the organization, via the real invite +
 // accept flow, holding the named system role. Using the production path rather
 // than writing rows directly means the tests exercise what customers exercise.
-func joinTenant(t *testing.T, svc *Service, inviter User, tenant Tenant, email, roleKey string) User {
+func joinOrganization(t *testing.T, svc *Service, inviter User, organization Organization, email, roleKey string) User {
 	t.Helper()
 	ctx := context.Background()
 
-	access := accessFor(t, svc, inviter, tenant.Slug)
-	roleID := systemRoleID(t, svc, tenant.ID, roleKey)
+	access := accessFor(t, svc, inviter, organization.Slug)
+	roleID := systemRoleID(t, svc, organization.ID, roleKey)
 
 	if _, err := svc.Invite(ctx, inviter, access, email, roleID); err != nil {
 		t.Fatalf("invite %s as %s: %v", email, roleKey, err)
@@ -36,8 +36,8 @@ func joinTenant(t *testing.T, svc *Service, inviter User, tenant Tenant, email, 
 	return user
 }
 
-// setupTenantWithOwner is the fixture for most of this file.
-func setupTenantWithOwner(t *testing.T, svc *Service) (Tenant, User) {
+// setupOrganizationWithOwner is the fixture for most of this file.
+func setupOrganizationWithOwner(t *testing.T, svc *Service) (Organization, User) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -45,7 +45,7 @@ func setupTenantWithOwner(t *testing.T, svc *Service) (Tenant, User) {
 	if err != nil {
 		t.Fatalf("register alice: %v", err)
 	}
-	acme, err := svc.CreateTenant(ctx, alice, "acme", "Acme Inc")
+	acme, err := svc.CreateOrganization(ctx, alice, "acme", "Acme Inc")
 	if err != nil {
 		t.Fatalf("create acme: %v", err)
 	}
@@ -62,36 +62,36 @@ func TestCannotGrantPermissionsYouDoNotHold(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
-	acme, alice := setupTenantWithOwner(t, svc)
+	acme, alice := setupOrganizationWithOwner(t, svc)
 
 	// Mallory is an admin. Admin holds roles.manage -- she is *supposed* to be
-	// able to build custom roles -- but NOT tenant.delete.
-	mallory := joinTenant(t, svc, alice, acme, "mallory@example.com", RoleKeyAdmin)
+	// able to build custom roles -- but NOT organization.delete.
+	mallory := joinOrganization(t, svc, alice, acme, "mallory@example.com", RoleKeyAdmin)
 	mAccess := accessFor(t, svc, mallory, acme.Slug)
 
 	if !mAccess.Can(PermRolesCreate) {
 		t.Fatal("the admin role should carry roles.manage; the fixture is wrong")
 	}
-	if mAccess.Can(PermTenantDelete) {
-		t.Fatal("the admin role must NOT carry tenant.delete; the fixture is wrong")
+	if mAccess.Can(PermOrganizationDelete) {
+		t.Fatal("the admin role must NOT carry organization.delete; the fixture is wrong")
 	}
 
 	t.Run("she cannot mint a role holding a permission she lacks", func(t *testing.T) {
 		_, err := svc.CreateRole(ctx, mallory, mAccess, "backdoor", "Backdoor",
-			[]Permission{PermTenantDelete})
+			[]Permission{PermOrganizationDelete})
 		if !errors.Is(err, ErrEscalation) {
-			t.Fatalf("an admin created a role carrying tenant.delete: got %v, want ErrEscalation", err)
+			t.Fatalf("an admin created a role carrying organization.delete: got %v, want ErrEscalation", err)
 		}
 		// The refusal must say WHAT she was missing, or she files a bug report
 		// about a role editor that mysteriously will not save.
-		if !contains(err.Error(), string(PermTenantDelete)) {
+		if !contains(err.Error(), string(PermOrganizationDelete)) {
 			t.Errorf("the error does not name the missing permission: %q", err)
 		}
 	})
 
 	t.Run("she cannot sneak it in among permissions she does hold", func(t *testing.T) {
 		_, err := svc.CreateRole(ctx, mallory, mAccess, "mostly_fine", "Mostly Fine",
-			[]Permission{PermMembersRead, PermAuditRead, PermTenantDelete})
+			[]Permission{PermMembersRead, PermAuditRead, PermOrganizationDelete})
 		if !errors.Is(err, ErrEscalation) {
 			t.Fatalf("got %v, want ErrEscalation", err)
 		}
@@ -99,20 +99,20 @@ func TestCannotGrantPermissionsYouDoNotHold(t *testing.T) {
 
 	t.Run("she CAN build a role from permissions she holds", func(t *testing.T) {
 		role, err := svc.CreateRole(ctx, mallory, mAccess, "auditor", "Auditor",
-			[]Permission{PermTenantRead, PermAuditRead})
+			[]Permission{PermOrganizationRead, PermAuditRead})
 		if err != nil {
 			t.Fatalf("an admin building a role within her own authority: %v", err)
 		}
 		if role.IsSystem {
 			t.Error("a role created through the API must not be a system role")
 		}
-		if role.TenantID == nil || *role.TenantID != acme.ID {
-			t.Error("the custom role is not scoped to the tenant that created it")
+		if role.OrganizationID == nil || *role.OrganizationID != acme.ID {
+			t.Error("the custom role is not scoped to the organization that created it")
 		}
 	})
 
 	t.Run("she cannot assign the owner role to herself", func(t *testing.T) {
-		// No special case makes this work: the owner role carries tenant.delete,
+		// No special case makes this work: the owner role carries organization.delete,
 		// which she lacks, so the ONE escalation rule catches it.
 		ownerID := systemRoleID(t, svc, acme.ID, RoleKeyOwner)
 		err := svc.SetMemberRoles(ctx, mallory, mAccess, mallory.ID, []uuid.UUID{ownerID})
@@ -122,7 +122,7 @@ func TestCannotGrantPermissionsYouDoNotHold(t *testing.T) {
 	})
 
 	t.Run("she cannot invite an accomplice as an owner", func(t *testing.T) {
-		// The other door into the tenant. Without the guard here, an admin who
+		// The other door into the organization. Without the guard here, an admin who
 		// cannot promote a member could simply invite a fresh account as owner and
 		// log in as it.
 		ownerID := systemRoleID(t, svc, acme.ID, RoleKeyOwner)
@@ -136,8 +136,8 @@ func TestCannotGrantPermissionsYouDoNotHold(t *testing.T) {
 		aAccess := accessFor(t, svc, alice, acme.Slug)
 
 		if _, err := svc.CreateRole(ctx, alice, aAccess, "destroyer", "Destroyer",
-			[]Permission{PermTenantDelete}); err != nil {
-			t.Errorf("an owner creating a role with tenant.delete: %v", err)
+			[]Permission{PermOrganizationDelete}); err != nil {
+			t.Errorf("an owner creating a role with organization.delete: %v", err)
 		}
 		ownerID := systemRoleID(t, svc, acme.ID, RoleKeyOwner)
 		if err := svc.SetMemberRoles(ctx, alice, aAccess, mallory.ID, []uuid.UUID{ownerID}); err != nil {
@@ -153,39 +153,39 @@ func TestCannotEditARoleMorePowerfulThanYou(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
-	acme, alice := setupTenantWithOwner(t, svc)
+	acme, alice := setupOrganizationWithOwner(t, svc)
 	aAccess := accessFor(t, svc, alice, acme.Slug)
 
 	// The owner builds a powerful custom role.
 	powerful, err := svc.CreateRole(ctx, alice, aAccess, "deployer", "Deployer",
-		[]Permission{PermTenantRead, PermTenantDelete})
+		[]Permission{PermOrganizationRead, PermOrganizationDelete})
 	if err != nil {
 		t.Fatalf("owner creating a powerful role: %v", err)
 	}
 
-	mallory := joinTenant(t, svc, alice, acme, "mallory@example.com", RoleKeyAdmin)
+	mallory := joinOrganization(t, svc, alice, acme, "mallory@example.com", RoleKeyAdmin)
 	mAccess := accessFor(t, svc, mallory, acme.Slug)
 
 	t.Run("an admin cannot rewrite it, even down to harmless permissions", func(t *testing.T) {
 		// She is not GRANTING anything she lacks here -- members.read is well within
-		// her authority -- but she would be stripping tenant.delete from whoever
+		// her authority -- but she would be stripping organization.delete from whoever
 		// holds the role, which is authority she does not have over them.
 		_, err := svc.UpdateRole(ctx, mallory, mAccess, powerful.ID, "Deployer",
 			[]Permission{PermMembersRead})
 		if !errors.Is(err, ErrEscalation) {
-			t.Fatalf("an admin rewrote a role carrying tenant.delete: got %v, want ErrEscalation", err)
+			t.Fatalf("an admin rewrote a role carrying organization.delete: got %v, want ErrEscalation", err)
 		}
 	})
 
 	t.Run("nor delete it", func(t *testing.T) {
 		if err := svc.DeleteRole(ctx, mallory, mAccess, powerful.ID); !errors.Is(err, ErrEscalation) {
-			t.Fatalf("an admin deleted a role carrying tenant.delete: got %v, want ErrEscalation", err)
+			t.Fatalf("an admin deleted a role carrying organization.delete: got %v, want ErrEscalation", err)
 		}
 	})
 
 	t.Run("the owner can", func(t *testing.T) {
 		if _, err := svc.UpdateRole(ctx, alice, aAccess, powerful.ID, "Deployer v2",
-			[]Permission{PermTenantRead}); err != nil {
+			[]Permission{PermOrganizationRead}); err != nil {
 			t.Errorf("owner updating the role: %v", err)
 		}
 		if err := svc.DeleteRole(ctx, alice, aAccess, powerful.ID); err != nil {
@@ -200,17 +200,17 @@ func TestSystemRolesAreImmutable(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
-	acme, alice := setupTenantWithOwner(t, svc)
+	acme, alice := setupOrganizationWithOwner(t, svc)
 	aAccess := accessFor(t, svc, alice, acme.Slug)
 
 	// Even the owner -- who holds every permission and could not possibly be
-	// escalating -- cannot touch them. If they could, a tenant could strip every
+	// escalating -- cannot touch them. If they could, an organization could strip every
 	// permission from "owner" and lock itself out permanently, with no way back
 	// short of a database console.
 	adminRoleID := systemRoleID(t, svc, acme.ID, RoleKeyAdmin)
 
 	t.Run("cannot be edited", func(t *testing.T) {
-		_, err := svc.UpdateRole(ctx, alice, aAccess, adminRoleID, "Hijacked", []Permission{PermTenantRead})
+		_, err := svc.UpdateRole(ctx, alice, aAccess, adminRoleID, "Hijacked", []Permission{PermOrganizationRead})
 		if !errors.Is(err, ErrSystemRole) {
 			t.Errorf("got %v, want ErrSystemRole", err)
 		}
@@ -223,7 +223,7 @@ func TestSystemRolesAreImmutable(t *testing.T) {
 	})
 
 	t.Run("their keys cannot be reused by a custom role", func(t *testing.T) {
-		_, err := svc.CreateRole(ctx, alice, aAccess, RoleKeyAdmin, "My Admin", []Permission{PermTenantRead})
+		_, err := svc.CreateRole(ctx, alice, aAccess, RoleKeyAdmin, "My Admin", []Permission{PermOrganizationRead})
 		if !errors.Is(err, ErrRoleKeyTaken) {
 			t.Errorf("got %v, want ErrRoleKeyTaken", err)
 		}
@@ -238,7 +238,7 @@ func TestPermissionsAreTheUnionOfEveryRoleHeld(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
-	acme, alice := setupTenantWithOwner(t, svc)
+	acme, alice := setupOrganizationWithOwner(t, svc)
 	aAccess := accessFor(t, svc, alice, acme.Slug)
 
 	auditor, err := svc.CreateRole(ctx, alice, aAccess, "auditor", "Auditor",
@@ -247,7 +247,7 @@ func TestPermissionsAreTheUnionOfEveryRoleHeld(t *testing.T) {
 		t.Fatalf("create auditor role: %v", err)
 	}
 
-	bob := joinTenant(t, svc, alice, acme, "bob@example.com", RoleKeyMember)
+	bob := joinOrganization(t, svc, alice, acme, "bob@example.com", RoleKeyMember)
 
 	// As a plain member, Bob cannot read the audit log.
 	before := accessFor(t, svc, bob, acme.Slug)
@@ -255,7 +255,7 @@ func TestPermissionsAreTheUnionOfEveryRoleHeld(t *testing.T) {
 		t.Fatal("a plain member can read the audit log; the member role is too generous")
 	}
 	if !before.Can(PermMembersRead) {
-		t.Fatal("a plain member cannot see the tenant's members; the member role is too stingy")
+		t.Fatal("a plain member cannot see the organization's members; the member role is too stingy")
 	}
 
 	// Give him BOTH member and auditor.
@@ -287,7 +287,7 @@ func TestLastOwnerCannotBeRemovedOrStripped(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
-	acme, alice := setupTenantWithOwner(t, svc)
+	acme, alice := setupOrganizationWithOwner(t, svc)
 	aAccess := accessFor(t, svc, alice, acme.Slug)
 	adminID := systemRoleID(t, svc, acme.ID, RoleKeyAdmin)
 
@@ -306,14 +306,14 @@ func TestLastOwnerCannotBeRemovedOrStripped(t *testing.T) {
 
 	t.Run("a member holding no roles at all is refused", func(t *testing.T) {
 		// Not a role change but a deletion of the person's entire access. They
-		// meant to remove them from the tenant.
+		// meant to remove them from the organization.
 		if err := svc.SetMemberRoles(ctx, alice, aAccess, alice.ID, nil); !errors.Is(err, ErrNoRoles) {
 			t.Errorf("got %v, want ErrNoRoles", err)
 		}
 	})
 
 	// With a second owner in place, both become legal.
-	bob := joinTenant(t, svc, alice, acme, "bob@example.com", RoleKeyOwner)
+	bob := joinOrganization(t, svc, alice, acme, "bob@example.com", RoleKeyOwner)
 
 	t.Run("with a second owner, the first may leave", func(t *testing.T) {
 		if err := svc.RemoveMember(ctx, alice, aAccess, alice.ID); err != nil {
@@ -333,8 +333,8 @@ func TestAdminsCannotTouchOwners(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
-	acme, alice := setupTenantWithOwner(t, svc)
-	mallory := joinTenant(t, svc, alice, acme, "mallory@example.com", RoleKeyAdmin)
+	acme, alice := setupOrganizationWithOwner(t, svc)
+	mallory := joinOrganization(t, svc, alice, acme, "mallory@example.com", RoleKeyAdmin)
 	mAccess := accessFor(t, svc, mallory, acme.Slug)
 
 	if !mAccess.Can(PermMembersDelete) {
@@ -362,7 +362,7 @@ func TestCannotDeleteARoleSomebodyHolds(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
-	acme, alice := setupTenantWithOwner(t, svc)
+	acme, alice := setupOrganizationWithOwner(t, svc)
 	aAccess := accessFor(t, svc, alice, acme.Slug)
 
 	auditor, err := svc.CreateRole(ctx, alice, aAccess, "auditor", "Auditor", []Permission{PermAuditRead})
@@ -370,7 +370,7 @@ func TestCannotDeleteARoleSomebodyHolds(t *testing.T) {
 		t.Fatalf("create role: %v", err)
 	}
 
-	bob := joinTenant(t, svc, alice, acme, "bob@example.com", RoleKeyMember)
+	bob := joinOrganization(t, svc, alice, acme, "bob@example.com", RoleKeyMember)
 	memberID := systemRoleID(t, svc, acme.ID, RoleKeyMember)
 
 	if err := svc.SetMemberRoles(ctx, alice, aAccess, bob.ID, []uuid.UUID{memberID, auditor.ID}); err != nil {
@@ -398,7 +398,7 @@ func TestRoleValidation(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
-	acme, alice := setupTenantWithOwner(t, svc)
+	acme, alice := setupOrganizationWithOwner(t, svc)
 	aAccess := accessFor(t, svc, alice, acme.Slug)
 
 	t.Run("a permission no code enforces is rejected", func(t *testing.T) {
@@ -423,17 +423,17 @@ func TestRoleValidation(t *testing.T) {
 			"billing_",         // trailing underscore
 			"billing__manager", // double underscore
 		} {
-			if _, err := svc.CreateRole(ctx, alice, aAccess, key, "X", []Permission{PermTenantRead}); !errors.Is(err, ErrValidation) {
+			if _, err := svc.CreateRole(ctx, alice, aAccess, key, "X", []Permission{PermOrganizationRead}); !errors.Is(err, ErrValidation) {
 				t.Errorf("key %q: got %v, want ErrValidation", key, err)
 			}
 		}
 	})
 
 	// Case and surrounding space are normalised away rather than rejected, exactly
-	// as tenant slugs are: "Billing" plainly means the "billing" role.
+	// as organization slugs are: "Billing" plainly means the "billing" role.
 	t.Run("keys are normalised, not rejected, for case and space", func(t *testing.T) {
 		role, err := svc.CreateRole(ctx, alice, aAccess, "  BillingManager  ", "Billing Manager",
-			[]Permission{PermTenantRead})
+			[]Permission{PermOrganizationRead})
 		if err != nil {
 			t.Fatalf("create role with a messy key: %v", err)
 		}
@@ -452,35 +452,35 @@ func TestRoleValidation(t *testing.T) {
 // ---------------------------------------------------------------- pure units
 
 func TestPermissionSet(t *testing.T) {
-	s := NewPermissionSet(PermTenantRead, PermAuditRead)
+	s := NewPermissionSet(PermOrganizationRead, PermAuditRead)
 
-	if !s.Has(PermTenantRead) {
+	if !s.Has(PermOrganizationRead) {
 		t.Error("Has says the set lacks a permission it was built with")
 	}
-	if s.Has(PermTenantDelete) {
+	if s.Has(PermOrganizationDelete) {
 		t.Error("Has says the set holds a permission it never got")
 	}
 
 	// Superset IS the escalation guard, so its edges matter.
-	if !s.Superset(NewPermissionSet(PermTenantRead)) {
+	if !s.Superset(NewPermissionSet(PermOrganizationRead)) {
 		t.Error("a set must be a superset of its own subset")
 	}
 	if !s.Superset(NewPermissionSet()) {
 		t.Error("every set is a superset of the empty set")
 	}
-	if s.Superset(NewPermissionSet(PermTenantRead, PermTenantDelete)) {
+	if s.Superset(NewPermissionSet(PermOrganizationRead, PermOrganizationDelete)) {
 		t.Error("Superset accepted a permission the actor does not hold: this is the escalation hole")
 	}
 	if !AllPermissions().Superset(s) {
 		t.Error("the full catalog must be a superset of everything")
 	}
 
-	missing := s.Missing(NewPermissionSet(PermTenantRead, PermTenantDelete, PermRolesCreate))
+	missing := s.Missing(NewPermissionSet(PermOrganizationRead, PermOrganizationDelete, PermRolesCreate))
 	if len(missing) != 2 {
 		t.Fatalf("Missing returned %v, want the 2 permissions the set lacks", missing)
 	}
 	// Sorted, so error messages and tests are stable.
-	if missing[0] != PermRolesCreate || missing[1] != PermTenantDelete {
+	if missing[0] != PermOrganizationDelete || missing[1] != PermRolesCreate {
 		t.Errorf("Missing returned %v, want it sorted", missing)
 	}
 }

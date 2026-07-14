@@ -41,11 +41,11 @@ reset_token()  { logs | grep -o 'token=mtt_pwr_[A-Za-z0-9_-]*' | tail -1 | cut -
 echo "== INVITATION TOKENS ARE NOT RETURNED BY THE API =="
 reg alice@example.com; reg carol@example.com
 ALICE=$(login alice@example.com correct-horse-battery)
-req POST /tenants "$ALICE" '{"slug":"acme","name":"Acme Inc"}' >/dev/null
-req GET /tenants/acme/roles "$ALICE" >/dev/null
+req POST /organizations "$ALICE" '{"slug":"acme","name":"Acme Inc"}' >/dev/null
+req GET /organizations/acme/roles "$ALICE" >/dev/null
 MEMBER_ID=$(jq -r '.roles[]|select(.key=="member").id' /tmp/body)
 
-code=$(req POST /tenants/acme/invitations "$ALICE" "{\"email\":\"carol@example.com\",\"role_id\":\"$MEMBER_ID\"}")
+code=$(req POST /organizations/acme/invitations "$ALICE" "{\"email\":\"carol@example.com\",\"role_id\":\"$MEMBER_ID\"}")
 check "alice invites carol" 201 "$code"
 # THE FIX: the response carries no usable credential. An admin can no longer keep a
 # working link for an address they do not control.

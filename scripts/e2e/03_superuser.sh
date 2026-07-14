@@ -34,7 +34,7 @@ req() {
 }
 jqr() { jq -r "$1" /tmp/body; }
 # Registration now sends a VERIFICATION email, and an unverified address cannot
-# create a tenant. Click the link, exactly as a real user does — with
+# create an organization. Click the link, exactly as a real user does — with
 # MAIL_BACKEND=log the inbox is the application log.
 logs() { ${APP_LOGS:-docker compose logs app} 2>&1; }
 verify_email() { logs | grep -o 'token=mtt_ver_[A-Za-z0-9_-]*' | tail -1 | cut -d= -f2; }
@@ -50,13 +50,13 @@ req POST /auth/register - '{"email":"root@example.com","password":"correct-horse
 verify_last
 ALICE=$(login alice@example.com)
 ROOT=$(login root@example.com)
-code=$(req POST /tenants "$ALICE" '{"slug":"acme","name":"Acme Inc"}')
+code=$(req POST /organizations "$ALICE" '{"slug":"acme","name":"Acme Inc"}')
 check "alice creates acme" 201 "$code"
 
 echo "== before the grant, root is nobody =="
-code=$(req GET /tenants/acme "$ROOT")
+code=$(req GET /organizations/acme "$ROOT")
 check "plain user cannot see acme -> 404" 404 "$code"
-code=$(req GET /admin/tenants "$ROOT")
+code=$(req GET /admin/organizations "$ROOT")
 check "plain user hitting /admin -> 404 (not 403)" 404 "$code"
 code=$(req GET /admin/users "$ROOT")
 check "plain user hitting /admin/users -> 404" 404 "$code"
@@ -73,40 +73,40 @@ echo "== after the grant =="
 code=$(req GET /auth/me "$ROOT")
 check "me reports is_superuser" "true" "$(jqr .is_superuser)"
 
-code=$(req GET /admin/tenants "$ROOT")
-check "staff surface: list all tenants" 200 "$code"
-echo "  INFO  tenants visible to root: $(jq -r '.tenants[].tenant.slug' /tmp/body | tr '\n' ' ')"
-check "acme has 1 member" 1 "$(jq -r '.tenants[]|select(.tenant.slug=="acme").member_count' /tmp/body)"
+code=$(req GET /admin/organizations "$ROOT")
+check "staff surface: list all organizations" 200 "$code"
+echo "  INFO  organizations visible to root: $(jq -r '.organizations[].organization.slug' /tmp/body | tr '\n' ' ')"
+check "acme has 1 member" 1 "$(jq -r '.organizations[]|select(.organization.slug=="acme").member_count' /tmp/body)"
 
 code=$(req GET /admin/users "$ROOT")
 check "staff surface: list all users" 200 "$code"
 check "sees both users" 2 "$(jq '.users|length' /tmp/body)"
 
-echo "== tenant bypass =="
-code=$(req GET /tenants/acme "$ROOT")
+echo "== organization bypass =="
+code=$(req GET /organizations/acme "$ROOT")
 check "superuser enters acme without membership" 200 "$code"
 # A superuser holds NO role -- they are not a member of anything. They hold the
 # entire permission catalog instead, which is what makes every check pass.
 check "  ...holding no role (not a member)" 0 "$(jq '.roles|length' /tmp/body)"
 check "  ...but the full permission set" 14 "$(jq '.permissions|length' /tmp/body)"
 check "  ...flagged via_superuser" "true" "$(jqr .via_superuser)"
-code=$(req GET /tenants/acme/members "$ROOT")
+code=$(req GET /organizations/acme/members "$ROOT")
 check "superuser lists acme's members" 200 "$code"
-code=$(req GET /tenants/nope "$ROOT")
-check "bypass does not conjure a fake tenant -> 404" 404 "$code"
+code=$(req GET /organizations/nope "$ROOT")
+check "bypass does not conjure a fake organization -> 404" 404 "$code"
 
 echo "== alice (a real owner) is NOT flagged =="
-code=$(req GET /tenants/acme "$ALICE")
+code=$(req GET /organizations/acme "$ALICE")
 check "alice's access has no via_superuser" "null" "$(jq -r '.via_superuser // "null"' /tmp/body)"
 
 echo "== the bypass is audited =="
-code=$(req GET /tenants/acme/audit "$ALICE")
-n=$(jq '[.entries[]|select(.action=="superuser.tenant_accessed")]|length' /tmp/body)
-echo "  INFO  superuser.tenant_accessed entries: $n"
+code=$(req GET /organizations/acme/audit "$ALICE")
+n=$(jq '[.entries[]|select(.action=="superuser.organization_accessed")]|length' /tmp/body)
+echo "  INFO  superuser.organization_accessed entries: $n"
 [ "$n" -eq 2 ] && { echo "  PASS  exactly the 2 real bypasses recorded (the 404 correctly wrote none)"; pass=$((pass+1)); } \
                || { echo "  FAIL  expected exactly 2 bypass entries, got $n"; fail=$((fail+1)); }
 echo "  INFO  a recorded entry:"
-jq -c '[.entries[]|select(.action=="superuser.tenant_accessed")][0]|{action,metadata}' /tmp/body | sed 's/^/        /'
+jq -c '[.entries[]|select(.action=="superuser.organization_accessed")][0]|{action,metadata}' /tmp/body | sed 's/^/        /'
 
 echo "== deactivation is immediate =="
 ALICE_ID=$(req GET /auth/me "$ALICE" >/dev/null; jqr .id)
@@ -135,10 +135,10 @@ check "alice is still not a superuser" "false" "$(jqr .is_superuser)"
 
 echo "== revoke via CLI =="
 ${SERVER_CMD:-docker compose exec -T app /app/server} revoke-superuser root@example.com >/dev/null 2>&1
-code=$(req GET /admin/tenants "$ROOT")
+code=$(req GET /admin/organizations "$ROOT")
 check "revoked: staff surface gone -> 404" 404 "$code"
-code=$(req GET /tenants/acme "$ROOT")
-check "revoked: tenant bypass gone -> 404" 404 "$code"
+code=$(req GET /organizations/acme "$ROOT")
+check "revoked: organization bypass gone -> 404" 404 "$code"
 
 echo
 echo "======================================"

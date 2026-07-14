@@ -1,4 +1,4 @@
-// Package audit records an append-only history of who did what, in which tenant,
+// Package audit records an append-only history of who did what, in which organization,
 // from where, and in which request.
 //
 // Nothing in this package updates or deletes, and a database trigger (migration
@@ -61,13 +61,13 @@ const (
 	ActionPasswordReset          Action = "users.password_reset"
 	ActionEmailVerified          Action = "users.email_verified"
 	ActionSessionRevoked         Action = "users.session_revoked"
-	ActionTenantPurged           Action = "tenants.purged" // hard delete; irreversible
+	ActionOrganizationPurged     Action = "organizations.purged" // hard delete; irreversible
 
-	// --- Tenants ---
-	ActionTenantCreated  Action = "tenants.created"
-	ActionTenantUpdated  Action = "tenants.updated"
-	ActionTenantDeleted  Action = "tenants.deleted"  // soft: restorable
-	ActionTenantRestored Action = "tenants.restored" // superuser only
+	// --- Organizations ---
+	ActionOrganizationCreated  Action = "organizations.created"
+	ActionOrganizationUpdated  Action = "organizations.updated"
+	ActionOrganizationDeleted  Action = "organizations.deleted"  // soft: restorable
+	ActionOrganizationRestored Action = "organizations.restored" // superuser only
 
 	// --- Members and invitations ---
 	ActionInvitationCreated Action = "invitations.created"
@@ -85,13 +85,13 @@ const (
 	ActionRoleDeleted Action = "roles.deleted"
 
 	// --- Superuser ---
-	// The only ways a person can act outside the tenants they belong to. If you
-	// alert on one thing in this list, alert on ActionSuperuserTenantAccessed.
-	ActionSuperuserTenantAccessed Action = "superuser.tenant_accessed"
-	ActionSuperuserGranted        Action = "superuser.granted" // CLI only; actor is NULL
-	ActionSuperuserRevoked        Action = "superuser.revoked"
-	ActionUserDeactivated         Action = "users.deactivated"
-	ActionUserReactivated         Action = "users.reactivated"
+	// The only ways a person can act outside the organizations they belong to. If you
+	// alert on one thing in this list, alert on ActionSuperuserOrganizationAccessed.
+	ActionSuperuserOrganizationAccessed Action = "superuser.organization_accessed"
+	ActionSuperuserGranted              Action = "superuser.granted" // CLI only; actor is NULL
+	ActionSuperuserRevoked              Action = "superuser.revoked"
+	ActionUserDeactivated               Action = "users.deactivated"
+	ActionUserReactivated               Action = "users.reactivated"
 
 	// --- DENIALS ---
 	//
@@ -121,13 +121,13 @@ const (
 
 // Entry is one recorded event.
 type Entry struct {
-	ID          uuid.UUID      `json:"id"`
-	TenantID    *uuid.UUID     `json:"tenant_id,omitempty"`
-	ActorUserID *uuid.UUID     `json:"actor_user_id,omitempty"`
-	Action      Action         `json:"action"`
-	TargetType  string         `json:"target_type,omitempty"`
-	TargetID    string         `json:"target_id,omitempty"`
-	Metadata    map[string]any `json:"metadata"`
+	ID             uuid.UUID      `json:"id"`
+	OrganizationID *uuid.UUID     `json:"organization_id,omitempty"`
+	ActorUserID    *uuid.UUID     `json:"actor_user_id,omitempty"`
+	Action         Action         `json:"action"`
+	TargetType     string         `json:"target_type,omitempty"`
+	TargetID       string         `json:"target_id,omitempty"`
+	Metadata       map[string]any `json:"metadata"`
 
 	// RequestID ties the entry back to the HTTP request that caused it, and so to
 	// every application log line for that request. The first thing you want in an
@@ -141,16 +141,16 @@ type Entry struct {
 
 // Event is what a caller hands to Record.
 //
-// TenantID and ActorUserID are pointers because plenty of events have neither: a
-// registration happens before the user belongs to any tenant, a failed login has
+// OrganizationID and ActorUserID are pointers because plenty of events have neither: a
+// registration happens before the user belongs to any organization, a failed login has
 // no established actor at all, and a CLI grant has no logged-in user behind it.
 type Event struct {
-	TenantID    *uuid.UUID
-	ActorUserID *uuid.UUID
-	Action      Action
-	TargetType  string
-	TargetID    string
-	Metadata    map[string]any
+	OrganizationID *uuid.UUID
+	ActorUserID    *uuid.UUID
+	Action         Action
+	TargetType     string
+	TargetID       string
+	Metadata       map[string]any
 
 	RequestID string
 	IPAddress string
@@ -248,10 +248,10 @@ func (r *Recorder) Record(ctx context.Context, e Event) error {
 
 	_, err = r.db.Exec(ctx,
 		`INSERT INTO audit_log
-		     (tenant_id, actor_user_id, action, target_type, target_id, metadata,
+		     (organization_id, actor_user_id, action, target_type, target_id, metadata,
 		      request_id, ip_address, user_agent)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		e.TenantID, e.ActorUserID, e.Action, e.TargetType, e.TargetID, raw,
+		e.OrganizationID, e.ActorUserID, e.Action, e.TargetType, e.TargetID, raw,
 		e.RequestID, parseIP(e.IPAddress), ua,
 	)
 	if err != nil {
@@ -260,7 +260,7 @@ func (r *Recorder) Record(ctx context.Context, e Event) error {
 	return nil
 }
 
-// Filter narrows a listing. The zero value matches everything in the tenant.
+// Filter narrows a listing. The zero value matches everything in the organization.
 type Filter struct {
 	// Action, if set, matches one exact action ("roles.created").
 	Action Action
@@ -275,13 +275,13 @@ type Filter struct {
 	Limit int
 }
 
-// List returns a tenant's entries, newest first.
+// List returns an organization's entries, newest first.
 //
 // Pagination is keyset, not OFFSET. Because ids are uuidv7 and therefore ordered
 // by creation time, "id < before" means "older than" -- so a page is an index
 // walk with no sort, page 100 costs what page 1 costs, and a row arriving
 // mid-scroll cannot shift the pages under the reader. OFFSET fails all three.
-func (r *Recorder) List(ctx context.Context, tenantID uuid.UUID, f Filter) ([]Entry, error) {
+func (r *Recorder) List(ctx context.Context, organizationID uuid.UUID, f Filter) ([]Entry, error) {
 	limit := f.Limit
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -310,10 +310,10 @@ func (r *Recorder) List(ctx context.Context, tenantID uuid.UUID, f Filter) ([]En
 	}
 
 	rows, err := r.db.Query(ctx,
-		`SELECT id, tenant_id, actor_user_id, action, target_type, target_id, metadata,
+		`SELECT id, organization_id, actor_user_id, action, target_type, target_id, metadata,
 		        request_id, ip_address, user_agent, created_at
 		 FROM audit_log
-		 WHERE tenant_id = $1
+		 WHERE organization_id = $1
 		   AND ($2::uuid IS NULL OR id < $2::uuid)
 		   AND ($3::text IS NULL OR action = $3::text)
 		   AND ($4::uuid IS NULL OR actor_user_id = $4::uuid)
@@ -321,7 +321,7 @@ func (r *Recorder) List(ctx context.Context, tenantID uuid.UUID, f Filter) ([]En
 		   AND ($6::timestamptz IS NULL OR created_at <= $6::timestamptz)
 		 ORDER BY id DESC
 		 LIMIT $7`,
-		tenantID, before, action, actor, from, to, limit,
+		organizationID, before, action, actor, from, to, limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("audit: list: %w", err)
@@ -376,7 +376,7 @@ func collectEntries(rows interface {
 		var ip *netip.Addr
 
 		if err := rows.Scan(
-			&e.ID, &e.TenantID, &e.ActorUserID, &e.Action,
+			&e.ID, &e.OrganizationID, &e.ActorUserID, &e.Action,
 			&e.TargetType, &e.TargetID, &raw,
 			&e.RequestID, &ip, &e.UserAgent, &e.CreatedAt,
 		); err != nil {

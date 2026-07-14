@@ -4,8 +4,8 @@
 --
 --   permissions       the vocabulary. One row per enforcement point in the CODE.
 --                     Not user-authored -- see the note below.
---   roles             a named bundle of permissions. System roles (tenant_id
---                     NULL) ship with the app; tenants may create their own.
+--   roles             a named bundle of permissions. System roles (organization_id
+--                     NULL) ship with the app; organizations may create their own.
 --   role_permissions  which permissions a role grants. THE CONFIGURABLE PART.
 --   membership_roles  which roles a member holds. A member may hold several;
 --                     their permissions are the union.
@@ -15,7 +15,7 @@
 -- by a user.
 --
 -- Why: a permission name only means something because some line of Go enforces
--- it. If a tenant admin could invent "billing.refund", it would be stored,
+-- it. If an organization admin could invent "billing.refund", it would be stored,
 -- assigned to a role, and rendered with a checkbox in the UI -- while enforcing
 -- absolutely nothing. It would look like it worked and grant zero. The foreign
 -- key from role_permissions into this table is what makes that impossible: you
@@ -28,32 +28,32 @@ CREATE TABLE permissions (
 
 -- A role is a named bundle of permissions.
 --
--- tenant_id NULL  => a SYSTEM role: ships with the application, shared by every
---                    tenant, and immutable (is_system). owner/admin/member.
--- tenant_id set   => a CUSTOM role belonging to one tenant, created and edited
+-- organization_id NULL  => a SYSTEM role: ships with the application, shared by every
+--                    organization, and immutable (is_system). owner/admin/member.
+-- organization_id set   => a CUSTOM role belonging to one organization, created and edited
 --                    at runtime by someone holding roles.manage.
 CREATE TABLE roles (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
-    tenant_id  uuid REFERENCES tenants(id) ON DELETE CASCADE,
+    organization_id  uuid REFERENCES organizations(id) ON DELETE CASCADE,
     key        text NOT NULL,              -- stable identifier, e.g. "billing_manager"
     name       text NOT NULL,              -- human label, e.g. "Billing Manager"
     -- is_system marks a role the application depends on. It cannot be edited or
-    -- deleted through the API, so a tenant cannot lock itself out by, say,
+    -- deleted through the API, so an organization cannot lock itself out by, say,
     -- stripping every permission from "owner".
     is_system  boolean NOT NULL DEFAULT false,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
 
-    -- A system role must have no tenant, and a custom role must have one.
-    CONSTRAINT roles_system_has_no_tenant
-        CHECK ((is_system AND tenant_id IS NULL) OR (NOT is_system AND tenant_id IS NOT NULL))
+    -- A system role must have no organization, and a custom role must have one.
+    CONSTRAINT roles_system_has_no_organization
+        CHECK ((is_system AND organization_id IS NULL) OR (NOT is_system AND organization_id IS NOT NULL))
 );
 
--- Role keys are unique per tenant. Two partial indexes rather than one UNIQUE
--- constraint, because NULL never equals NULL in SQL: a plain UNIQUE (tenant_id,
+-- Role keys are unique per organization. Two partial indexes rather than one UNIQUE
+-- constraint, because NULL never equals NULL in SQL: a plain UNIQUE (organization_id,
 -- key) would happily allow two system roles both called "owner".
-CREATE UNIQUE INDEX roles_system_key_idx ON roles (key) WHERE tenant_id IS NULL;
-CREATE UNIQUE INDEX roles_tenant_key_idx ON roles (tenant_id, key) WHERE tenant_id IS NOT NULL;
+CREATE UNIQUE INDEX roles_system_key_idx ON roles (key) WHERE organization_id IS NULL;
+CREATE UNIQUE INDEX roles_organization_key_idx ON roles (organization_id, key) WHERE organization_id IS NOT NULL;
 
 -- Which permissions a role grants. This is the part customers configure.
 CREATE TABLE role_permissions (
@@ -90,43 +90,43 @@ CREATE INDEX membership_roles_role_id_idx ON membership_roles (role_id);
 -- from the Go constants -- so adding a permission later needs a code change, not
 -- a migration. Seeding here means a freshly migrated database is usable at once.
 INSERT INTO permissions (key, description) VALUES
-    ('tenant.read',          'View the tenant and its settings'),
-    ('tenant.update',        'Change the tenant''s name and settings'),
-    ('tenant.delete',        'Delete the tenant entirely'),
-    ('members.read',         'View the tenant''s members'),
-    ('members.invite',       'Invite people to the tenant'),
-    ('members.remove',       'Remove members from the tenant'),
+    ('organization.read',          'View the organization and its settings'),
+    ('organization.update',        'Change the organization''s name and settings'),
+    ('organization.delete',        'Delete the organization entirely'),
+    ('members.read',         'View the organization''s members'),
+    ('members.invite',       'Invite people to the organization'),
+    ('members.remove',       'Remove members from the organization'),
     ('members.assign_roles', 'Change which roles a member holds'),
-    ('roles.read',           'View the tenant''s roles'),
+    ('roles.read',           'View the organization''s roles'),
     ('roles.manage',         'Create, edit, and delete custom roles'),
-    ('audit.read',           'Read the tenant''s audit log');
+    ('audit.read',           'Read the organization''s audit log');
 
 -- The three system roles.
-INSERT INTO roles (tenant_id, key, name, is_system) VALUES
+INSERT INTO roles (organization_id, key, name, is_system) VALUES
     (NULL, 'owner',  'Owner',  true),
     (NULL, 'admin',  'Admin',  true),
     (NULL, 'member', 'Member', true);
 
--- owner: everything. This is what the last-owner guard protects -- a tenant with
+-- owner: everything. This is what the last-owner guard protects -- an organization with
 -- no owner would have nobody able to grant roles or delete it.
 INSERT INTO role_permissions (role_id, permission)
 SELECT r.id, p.key
 FROM roles r CROSS JOIN permissions p
 WHERE r.is_system AND r.key = 'owner';
 
--- admin: the tenant administrator. Everything except destroying the tenant.
+-- admin: the organization administrator. Everything except destroying the organization.
 INSERT INTO role_permissions (role_id, permission)
 SELECT r.id, p.key
 FROM roles r CROSS JOIN permissions p
 WHERE r.is_system AND r.key = 'admin'
-  AND p.key <> 'tenant.delete';
+  AND p.key <> 'organization.delete';
 
--- member: can see the tenant and who else is in it. Nothing more.
+-- member: can see the organization and who else is in it. Nothing more.
 INSERT INTO role_permissions (role_id, permission)
 SELECT r.id, p.key
 FROM roles r CROSS JOIN permissions p
 WHERE r.is_system AND r.key = 'member'
-  AND p.key IN ('tenant.read', 'members.read');
+  AND p.key IN ('organization.read', 'members.read');
 
 -- ---------------------------------------------------------------- migrate data
 

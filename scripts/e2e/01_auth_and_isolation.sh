@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Drive the real HTTP API end to end: register -> login -> create tenant ->
+# Drive the real HTTP API end to end: register -> login -> create organization ->
 # invite -> accept -> role change -> isolation probe -> audit log.
 #
 # Overridable so these run against compose OR a plain binary (see .github/workflows):
@@ -40,14 +40,14 @@ req() { # req <method> <path> <token|-> [json]
 
 jqr() { jq -r "$1" /tmp/body; }
 # Registration now sends a VERIFICATION email, and an unverified address cannot
-# create a tenant. Click the link, exactly as a real user does — with
+# create an organization. Click the link, exactly as a real user does — with
 # MAIL_BACKEND=log the inbox is the application log.
 logs() { ${APP_LOGS:-docker compose logs app} 2>&1; }
 verify_email() { logs | grep -o 'token=mtt_ver_[A-Za-z0-9_-]*' | tail -1 | cut -d= -f2; }
 verify_last() { req POST /auth/email/verify - "{\"token\":\"$(verify_email)\"}" >/dev/null; }
 
 logs() { ${APP_LOGS:-docker compose logs app} 2>&1; }
-roleid() { req GET "/tenants/$1/roles" "$2" >/dev/null; jq -r ".roles[]|select(.key==\"$3\").id" /tmp/body; }
+roleid() { req GET "/organizations/$1/roles" "$2" >/dev/null; jq -r ".roles[]|select(.key==\"$3\").id" /tmp/body; }
 
 echo "== register =="
 code=$(req POST /auth/register - '{"email":"alice@example.com","password":"correct-horse-battery","full_name":"Alice"}')
@@ -90,33 +90,33 @@ check "me with a good token" 200 "$code"
 check "me is alice" "alice@example.com" "$(jqr .email)"
 check "password hash is not exposed" "null" "$(jq -r '.password_hash // "null"' /tmp/body)"
 
-echo "== tenants =="
-code=$(req POST /tenants "$ALICE" '{"slug":"acme","name":"Acme Inc"}')
+echo "== organizations =="
+code=$(req POST /organizations "$ALICE" '{"slug":"acme","name":"Acme Inc"}')
 check "alice creates acme" 201 "$code"
-code=$(req POST /tenants "$BOB" '{"slug":"globex","name":"Globex Corp"}')
+code=$(req POST /organizations "$BOB" '{"slug":"globex","name":"Globex Corp"}')
 check "bob creates globex" 201 "$code"
-code=$(req POST /tenants "$ALICE" '{"slug":"api","name":"Reserved"}')
+code=$(req POST /organizations "$ALICE" '{"slug":"api","name":"Reserved"}')
 check "reserved slug -> 400" 400 "$code"
-code=$(req POST /tenants "$ALICE" '{"slug":"acme","name":"Dupe"}')
+code=$(req POST /organizations "$ALICE" '{"slug":"acme","name":"Dupe"}')
 check "duplicate slug -> 409" 409 "$code"
 
-code=$(req GET /tenants/acme "$ALICE")
+code=$(req GET /organizations/acme "$ALICE")
 check "alice reads acme" 200 "$code"
 check "alice is owner" "true" "$(jq '.roles|any(.key=="owner")' /tmp/body)"
 
 echo "== ISOLATION =="
-code=$(req GET /tenants/globex "$ALICE")
+code=$(req GET /organizations/globex "$ALICE")
 check "alice reading globex -> 404 (not 403)" 404 "$code"
-code=$(req GET /tenants/acme "$BOB")
+code=$(req GET /organizations/acme "$BOB")
 check "bob reading acme -> 404" 404 "$code"
-code=$(req GET /tenants/globex/members "$ALICE")
+code=$(req GET /organizations/globex/members "$ALICE")
 check "alice listing globex members -> 404" 404 "$code"
-code=$(req GET /tenants/nonexistent "$ALICE")
-check "nonexistent tenant -> 404 (same as forbidden)" 404 "$code"
+code=$(req GET /organizations/nonexistent "$ALICE")
+check "nonexistent organization -> 404 (same as forbidden)" 404 "$code"
 
 echo "== invitations =="
 MEMBER_ID=$(roleid acme "$ALICE" member)
-code=$(req POST /tenants/acme/invitations "$ALICE" "{\"email\":\"carol@example.com\",\"role_id\":\"$MEMBER_ID\"}")
+code=$(req POST /organizations/acme/invitations "$ALICE" "{\"email\":\"carol@example.com\",\"role_id\":\"$MEMBER_ID\"}")
 check "alice invites carol" 201 "$code"
 INV=$(invite_token)
 
@@ -130,32 +130,32 @@ check "carol joined acme" "acme" "$(jqr .slug)"
 code=$(req POST /invitations/accept "$CAROL" "{\"token\":\"$INV\"}")
 check "replaying a spent invite -> 400" 400 "$code"
 
-code=$(req GET /tenants/acme "$CAROL")
+code=$(req GET /organizations/acme "$CAROL")
 check "carol can now read acme" 200 "$code"
 check "carol is a member" "true" "$(jq '.roles|any(.key=="member")' /tmp/body)"
 
 echo "== role enforcement =="
-CAROL_ID=$(req GET /tenants/acme/members "$ALICE" >/dev/null; jq -r '.members[]|select(.email=="carol@example.com").user_id' /tmp/body)
-code=$(req POST /tenants/acme/invitations "$CAROL" "{\"email\":\"dave@example.com\",\"role_id\":\"$MEMBER_ID\"}")
+CAROL_ID=$(req GET /organizations/acme/members "$ALICE" >/dev/null; jq -r '.members[]|select(.email=="carol@example.com").user_id' /tmp/body)
+code=$(req POST /organizations/acme/invitations "$CAROL" "{\"email\":\"dave@example.com\",\"role_id\":\"$MEMBER_ID\"}")
 check "member inviting -> 403" 403 "$code"
-code=$(req GET /tenants/acme/audit "$CAROL")
+code=$(req GET /organizations/acme/audit "$CAROL")
 check "member reading audit -> 403" 403 "$code"
 
 ADMIN_ID=$(roleid acme "$ALICE" admin)
-code=$(req PUT "/tenants/acme/members/$CAROL_ID/roles" "$ALICE" "{\"role_ids\":[\"$ADMIN_ID\"]}")
+code=$(req PUT "/organizations/acme/members/$CAROL_ID/roles" "$ALICE" "{\"role_ids\":[\"$ADMIN_ID\"]}")
 check "owner promotes carol to admin" 204 "$code"
-code=$(req POST /tenants/acme/invitations "$CAROL" "{\"email\":\"dave@example.com\",\"role_id\":\"$MEMBER_ID\"}")
+code=$(req POST /organizations/acme/invitations "$CAROL" "{\"email\":\"dave@example.com\",\"role_id\":\"$MEMBER_ID\"}")
 check "admin can now invite" 201 "$code"
 
 ALICE_ID=$(req GET /auth/me "$ALICE" >/dev/null; jqr .id)
-code=$(req PUT "/tenants/acme/members/$ALICE_ID/roles" "$CAROL" "{\"role_ids\":[\"$MEMBER_ID\"]}")
+code=$(req PUT "/organizations/acme/members/$ALICE_ID/roles" "$CAROL" "{\"role_ids\":[\"$MEMBER_ID\"]}")
 check "admin demoting the owner -> 403" 403 "$code"
 OWNER_ID=$(roleid acme "$ALICE" owner)
-code=$(req PUT "/tenants/acme/members/$CAROL_ID/roles" "$CAROL" "{\"role_ids\":[\"$OWNER_ID\"]}")
+code=$(req PUT "/organizations/acme/members/$CAROL_ID/roles" "$CAROL" "{\"role_ids\":[\"$OWNER_ID\"]}")
 check "admin self-promoting to owner -> 403" 403 "$code"
 
 echo "== last owner =="
-code=$(req DELETE "/tenants/acme/members/me" "$ALICE")
+code=$(req DELETE "/organizations/acme/members/me" "$ALICE")
 check "sole owner leaving -> 409" 409 "$code"
 
 echo "== sessions =="
@@ -171,13 +171,13 @@ check "bob's session unaffected" 200 "$code"
 echo "== audit =="
 code=$(req POST /auth/login - '{"email":"alice@example.com","password":"correct-horse-battery"}')
 ALICE=$(jqr .token)
-code=$(req GET /tenants/acme/audit "$ALICE")
+code=$(req GET /organizations/acme/audit "$ALICE")
 check "owner reads audit log" 200 "$code"
 n=$(jq '.entries|length' /tmp/body)
 echo "  INFO  acme audit entries: $n"
 jq -r '.entries[]|"        \(.action)"' /tmp/body | head -8
-foreign=$(jq -r '[.entries[]|select(.tenant_id==null)]|length' /tmp/body)
-check "no foreign/null tenant entries in acme's log" 0 "$foreign"
+foreign=$(jq -r '[.entries[]|select(.organization_id==null)]|length' /tmp/body)
+check "no foreign/null organization entries in acme's log" 0 "$foreign"
 
 echo
 echo "======================================"

@@ -67,9 +67,9 @@ jobs:
     runs-on: ubuntu-latest
 
     # The integration tests run against a REAL Postgres, because what they check IS
-    # the SQL: tenant isolation, the append-only trigger, uuidv7 defaults, partial
+    # the SQL: organization isolation, the append-only trigger, uuidv7 defaults, partial
     # unique indexes. A mock would happily "prove" that a query missing its
-    # tenant_id filter is correctly isolated -- which is the exact bug they exist to
+    # organization_id filter is correctly isolated -- which is the exact bug they exist to
     # catch.
     #
     # Postgres 18+ is required: every primary key defaults to the built-in uuidv7().
@@ -207,7 +207,7 @@ jobs:
             exit 1
           fi
 
-      # Each suite gets a FRESH database. They assume they are the only tenant in the
+      # Each suite gets a FRESH database. They assume they are the only organization in the
       # world, and a leftover row from the previous suite reads as a bug that is not
       # there -- which is exactly how I wasted a cycle building this.
       - name: e2e suites

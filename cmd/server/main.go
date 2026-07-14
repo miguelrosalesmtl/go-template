@@ -233,20 +233,25 @@ func newMailer(cfg *settings.Settings, log *slog.Logger) mail.Mailer {
 	return mail.NewLogMailer(log)
 }
 
-// reap periodically prunes the two tables that would otherwise grow without
-// bound: sessions, and (if a retention is configured) the audit log.
-//
-// Every replica runs this. That is harmless -- the DELETEs are idempotent and the
-// duplicated work is a couple of indexed statements an hour -- and it means the
-// cleanup needs no leader election and no separate cron deployment.
 // reap prunes the short-lived credential tables: sessions, password resets, and
 // email verifications. All three grow without bound and nothing else would ever
 // remove them.
 //
-// It does NOT purge the audit log or destroy soft-deleted tenants. That is `server
-// purge`, a separate privileged command -- the app connects as a role with no DELETE
-// on audit_log, so it could not do it even if asked. Destroying history takes a
-// deliberate act with elevated credentials.
+// Every replica runs this. That is harmless -- the DELETEs are idempotent and the
+// duplicated work is a couple of indexed statements an hour -- and it means the
+// cleanup needs no leader election and no separate cron deployment.
+//
+// It does NOT purge the audit log or destroy soft-deleted organizations. That is `server
+// purge`, a separate command you schedule yourself, because destroying history
+// should be a deliberate act rather than something a long-running process does on
+// a ticker.
+//
+// Note what is NOT enforcing that separation: database privileges. This template
+// runs a SINGLE user that owns the database, so the app holds DELETE on every table
+// in it, audit_log included -- the append-only trigger guards against mistakes, not
+// against code already running as the app. Keeping destruction out of the app is a
+// discipline here, not a guarantee. See internal/audit/audit.go for the two-identity
+// design that would make it one.
 func reap(ctx context.Context, svc *identity.Service, log *slog.Logger) {
 	ticker := time.NewTicker(cleanupInterval)
 	defer ticker.Stop()
@@ -274,14 +279,6 @@ func reap(ctx context.Context, svc *identity.Service, log *slog.Logger) {
 				log.Info("pruned dead password resets", slog.Int64("count", purged))
 			}
 
-			// AUDIT_RETENTION defaults to 0, which means keep forever, and then this
-			// does nothing at all. Destroying somebody's compliance evidence because
-			// a config value had a convenient default is not a decision this template
-			// makes for you.
-			//
-			// The purge runs in a transaction because it must set app.audit_purge
-			// (SET LOCAL) to satisfy the append-only trigger -- it is the only thing
-			// in the system permitted to delete an audit entry.
 			// Spent and expired email-verification tokens.
 			if purged, err := svc.CleanupEmailVerifications(ctx, sessionRetention); err != nil {
 				log.Warn("email-verification cleanup failed", slog.String("error", err.Error()))
@@ -295,18 +292,22 @@ func reap(ctx context.Context, svc *identity.Service, log *slog.Logger) {
 
 // runPurge handles `server purge`. It DESTROYS DATA, permanently.
 //
-// This is a separate, PRIVILEGED command rather than something the running app does
-// on a ticker, and that is the whole point of the least-privileged role: the app
-// connects as `app`, which has no DELETE on audit_log at all, so it COULD NOT do
-// this even if it were compromised into trying.
-//
-// Destroying an audit trail should be a deliberate act performed with elevated
-// credentials -- exactly like a migration. Run it as a cron job or a Kubernetes
-// CronJob, with the same connection settings the `migrate` job uses:
+// It is a separate command rather than something the running app does on a ticker,
+// because destroying an audit trail should be a deliberate act -- exactly like a
+// migration. Run it as a cron job or a Kubernetes CronJob, with the same connection
+// settings the `migrate` job uses:
 //
 //	server purge
 //
-// It honours AUDIT_RETENTION and TENANT_RETENTION, both of which default to 0 --
+// BE CLEAR ABOUT WHAT SEPARATES IT, THOUGH: not database privileges. This template
+// runs a single user that owns the database, so the app connects as `app` and holds
+// DELETE on audit_log just as this command does -- code running as the app could do
+// everything below if it were compromised into trying (see the append-only trigger
+// in migration 00009, which guards against mistakes, not against an adversary).
+// Splitting into a privileged identity for this command and a restricted one for the
+// app is the change that would turn this convention into an actual boundary.
+//
+// It honours AUDIT_RETENTION and ORGANIZATION_RETENTION, both of which default to 0 --
 // "keep forever" -- so with no configuration this command does nothing at all.
 func runPurge() error {
 	cfg, err := settings.Load()
@@ -315,8 +316,8 @@ func runPurge() error {
 	}
 	log := logger.New(cfg)
 
-	if cfg.Audit.Retention <= 0 && cfg.Tenant.Retention <= 0 {
-		log.Info("nothing to purge: both AUDIT_RETENTION and TENANT_RETENTION are 0 (keep forever)")
+	if cfg.Audit.Retention <= 0 && cfg.Organization.Retention <= 0 {
+		log.Info("nothing to purge: both AUDIT_RETENTION and ORGANIZATION_RETENTION are 0 (keep forever)")
 		return nil
 	}
 
@@ -331,16 +332,16 @@ func runPurge() error {
 
 	svc := identity.NewService(pool, cfg.Auth, cfg.Mail, mail.NewLogMailer(log), log)
 
-	// Tenants first: the cascade takes their audit entries with it, so purging them
+	// Organizations first: the cascade takes their audit entries with it, so purging them
 	// before the audit sweep saves the sweep the work.
-	if cfg.Tenant.Retention > 0 {
-		n, err := svc.PurgeDeletedTenants(ctx, cfg.Tenant.Retention)
+	if cfg.Organization.Retention > 0 {
+		n, err := svc.PurgeDeletedOrganizations(ctx, cfg.Organization.Retention)
 		if err != nil {
-			return fmt.Errorf("purge tenants: %w", err)
+			return fmt.Errorf("purge organizations: %w", err)
 		}
-		log.Warn("PERMANENTLY DESTROYED soft-deleted tenants and every row they owned",
-			slog.Int64("tenants", n),
-			slog.Duration("retention", cfg.Tenant.Retention),
+		log.Warn("PERMANENTLY DESTROYED soft-deleted organizations and every row they owned",
+			slog.Int64("organizations", n),
+			slog.Duration("retention", cfg.Organization.Retention),
 		)
 	}
 

@@ -8,8 +8,8 @@ import "errors"
 var (
 	// ErrNotFound means the requested row does not exist -- or exists but the
 	// caller has no membership granting them sight of it. The two are collapsed
-	// on purpose: telling a stranger "this tenant exists, but not for you" leaks
-	// which tenants exist.
+	// on purpose: telling a stranger "this organization exists, but not for you" leaks
+	// which organizations exist.
 	ErrNotFound = errors.New("identity: not found")
 
 	// ErrInvalidCredentials is returned for a bad email, a bad password, and a
@@ -21,7 +21,7 @@ var (
 	ErrUnauthenticated = errors.New("identity: unauthenticated")
 
 	// ErrForbidden means the caller is authenticated and is a member of the
-	// tenant, but their role is too weak for this action.
+	// organization, but their role is too weak for this action.
 	ErrForbidden = errors.New("identity: forbidden")
 
 	// ErrEmailTaken is returned when registering an email that already has an
@@ -29,22 +29,22 @@ var (
 	// rate-limit it (see the README) rather than pretending to succeed.
 	ErrEmailTaken = errors.New("identity: email already registered")
 
-	// ErrSlugTaken is returned when creating a tenant whose slug is in use.
-	ErrSlugTaken = errors.New("identity: tenant slug already taken")
+	// ErrSlugTaken is returned when creating an organization whose slug is in use.
+	ErrSlugTaken = errors.New("identity: organization slug already taken")
 
 	// ErrAlreadyMember is returned when inviting someone who already belongs to
-	// the tenant.
-	ErrAlreadyMember = errors.New("identity: user is already a member of this tenant")
+	// the organization.
+	ErrAlreadyMember = errors.New("identity: user is already a member of this organization")
 
 	// ErrInvitationInvalid covers an invitation token that is unknown, already
 	// accepted, revoked, or expired -- again collapsed, so a probe cannot learn
 	// which.
 	ErrInvitationInvalid = errors.New("identity: invitation is invalid or has expired")
 
-	// ErrLastOwner is returned when removing the final owner of a tenant, or
+	// ErrLastOwner is returned when removing the final owner of an organization, or
 	// stripping them of the owner role, which would leave it permanently
 	// unadministrable -- nobody could grant roles or delete it.
-	ErrLastOwner = errors.New("identity: cannot remove the last owner of a tenant")
+	ErrLastOwner = errors.New("identity: cannot remove the last owner of an organization")
 
 	// ErrEscalation is THE RBAC guard. It is returned when a caller tries to grant
 	// a permission they do not themselves hold -- by putting it in a role they are
@@ -58,7 +58,7 @@ var (
 
 	// ErrSystemRole is returned when trying to edit or delete a role the
 	// application ships and depends on (owner, admin, member). They are immutable
-	// so that a tenant cannot lock itself out -- by, say, stripping every
+	// so that an organization cannot lock itself out -- by, say, stripping every
 	// permission from "owner".
 	ErrSystemRole = errors.New("identity: system roles cannot be modified or deleted")
 
@@ -67,14 +67,14 @@ var (
 	// side effect of a delete is not something to do quietly.
 	ErrRoleInUse = errors.New("identity: this role is still assigned to members")
 
-	// ErrRoleKeyTaken is returned when creating a role whose key the tenant
-	// already uses -- including the keys of the system roles, which every tenant
+	// ErrRoleKeyTaken is returned when creating a role whose key the organization
+	// already uses -- including the keys of the system roles, which every organization
 	// shares.
 	ErrRoleKeyTaken = errors.New("identity: a role with that key already exists")
 
 	// ErrNoRoles is returned when a membership would be left holding no roles at
 	// all, which is a member who can do nothing and see nothing -- almost certainly
-	// a mistake rather than an intent. Remove them from the tenant instead.
+	// a mistake rather than an intent. Remove them from the organization instead.
 	ErrNoRoles = errors.New("identity: a member must hold at least one role")
 
 	// ErrInvalidToken covers a password-reset token that is unknown, already spent,
@@ -96,15 +96,15 @@ var (
 	ErrMailFailed = errors.New("identity: the email could not be sent")
 
 	// ErrEmailNotVerified means the caller has not proved they control their email
-	// address, and is trying to do the one thing that requires it: create a tenant.
+	// address, and is trying to do the one thing that requires it: create an organization.
 	//
-	// It gates tenant creation rather than login on purpose -- see User.EmailVerifiedAt.
+	// It gates organization creation rather than login on purpose -- see User.EmailVerifiedAt.
 	ErrEmailNotVerified = errors.New("identity: verify your email address first")
 
-	// ErrTooManyTenants means the caller has hit MAX_TENANTS_PER_USER. Without a
-	// cap, one account can stand up unlimited tenants, which is free storage and a
+	// ErrTooManyOrganizations means the caller has hit MAX_ORGANIZATIONS_PER_USER. Without a
+	// cap, one account can stand up unlimited organizations, which is free storage and a
 	// free abuse vector.
-	ErrTooManyTenants = errors.New("identity: you have reached the maximum number of tenants")
+	ErrTooManyOrganizations = errors.New("identity: you have reached the maximum number of organizations")
 
 	// ErrValidation is the base for input that is malformed. Wrap it with the
 	// specific complaint (see validationError) so the message reaches the caller

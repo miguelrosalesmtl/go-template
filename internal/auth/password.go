@@ -1,7 +1,7 @@
 // Package auth holds the two primitives every multi-tenant app needs and nobody
 // should hand-roll twice: password hashing and opaque bearer tokens.
 //
-// It knows nothing about users, tenants, or HTTP -- it deals only in strings and
+// It knows nothing about users, organizations, or HTTP -- it deals only in strings and
 // bytes, which keeps it trivially testable and reusable.
 package auth
 

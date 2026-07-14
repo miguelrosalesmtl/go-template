@@ -28,7 +28,7 @@ func TestAuditLogRefusesAccidentalTampering(t *testing.T) {
 	ctx := context.Background()
 
 	// Produce one entry to attack.
-	acme, alice := setupTenantWithOwner(t, svc)
+	acme, alice := setupOrganizationWithOwner(t, svc)
 	_ = alice
 
 	entries, err := audit.NewRecorder(testPool).List(ctx, acme.ID, audit.Filter{})
@@ -36,7 +36,7 @@ func TestAuditLogRefusesAccidentalTampering(t *testing.T) {
 		t.Fatalf("list audit: %v", err)
 	}
 	if len(entries) == 0 {
-		t.Fatal("creating a tenant wrote no audit entry")
+		t.Fatal("creating an organization wrote no audit entry")
 	}
 	victim := entries[0]
 
@@ -142,8 +142,8 @@ func TestFailedLoginsAreAudited(t *testing.T) {
 		t.Fatal("a deactivated user logged in")
 	}
 
-	// Failed logins have no tenant -- there is none yet -- so they are read straight
-	// from the table rather than through the tenant-scoped List.
+	// Failed logins have no organization -- there is none yet -- so they are read straight
+	// from the table rather than through the organization-scoped List.
 	rows, err := testPool.Query(ctx,
 		`SELECT metadata->>'reason', metadata->>'email'
 		 FROM audit_log WHERE action = $1 ORDER BY id`, audit.ActionLoginFailed)
@@ -179,15 +179,15 @@ func TestAuditSearch(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
-	acme, alice := setupTenantWithOwner(t, svc)
+	acme, alice := setupOrganizationWithOwner(t, svc)
 	aAccess := accessFor(t, svc, alice, acme.Slug)
 
 	if _, err := svc.CreateRole(ctx, alice, aAccess, "auditor", "Auditor",
 		[]Permission{PermAuditRead}); err != nil {
 		t.Fatalf("create role: %v", err)
 	}
-	if _, err := svc.UpdateTenant(ctx, alice, aAccess, "Acme Corp"); err != nil {
-		t.Fatalf("rename tenant: %v", err)
+	if _, err := svc.UpdateOrganization(ctx, alice, aAccess, "Acme Corp"); err != nil {
+		t.Fatalf("rename organization: %v", err)
 	}
 
 	rec := audit.NewRecorder(testPool)
@@ -275,7 +275,7 @@ func TestTheAppCanBypassTheAuditTriggerIfItWantsTo(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
-	setupTenantWithOwner(t, svc) // produces audit entries
+	setupOrganizationWithOwner(t, svc) // produces audit entries
 
 	var before int
 	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM audit_log`).Scan(&before); err != nil {

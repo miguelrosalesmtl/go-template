@@ -17,15 +17,15 @@ import (
 
 // Settings is the fully-resolved configuration for a single process.
 type Settings struct {
-	App       App
-	Server    Server
-	Postgres  Postgres
-	Auth      Auth
-	Audit     Audit
-	Tenant    Tenant
-	CORS      CORS
-	Mail      Mail
-	RateLimit RateLimit
+	App          App
+	Server       Server
+	Postgres     Postgres
+	Auth         Auth
+	Audit        Audit
+	Organization Organization
+	CORS         CORS
+	Mail         Mail
+	RateLimit    RateLimit
 }
 
 // Mail configures how invitation and password-reset email is sent.
@@ -87,19 +87,19 @@ type Audit struct {
 	Retention time.Duration `env:"AUDIT_RETENTION" envDefault:"0"`
 }
 
-// Tenant holds the tenant lifecycle policy.
-type Tenant struct {
-	// Retention is how long a SOFT-DELETED tenant is kept before it is destroyed
+// Organization holds the organization lifecycle policy.
+type Organization struct {
+	// Retention is how long a SOFT-DELETED organization is kept before it is destroyed
 	// for real, cascading away every row it owns. ZERO -- THE DEFAULT -- MEANS KEEP
 	// FOREVER.
 	//
 	// This is your right-to-erasure mechanism, and it is the only thing in the
-	// application that permanently destroys tenant data. It is off by default for
+	// application that permanently destroys organization data. It is off by default for
 	// the same reason AUDIT_RETENTION is: silently shredding a customer's data
 	// because a config value had a tidy default is not a decision this template
 	// makes for you. 30d is a common choice, and gives support time to undo an
 	// accident.
-	Retention time.Duration `env:"TENANT_RETENTION" envDefault:"0"`
+	Retention time.Duration `env:"ORGANIZATION_RETENTION" envDefault:"0"`
 }
 
 // CORS controls which browser origins may call this API.
@@ -197,19 +197,19 @@ type Auth struct {
 	// EmailVerifyTTL is how long a "confirm your address" link stays valid.
 	EmailVerifyTTL time.Duration `env:"AUTH_EMAIL_VERIFY_TTL" envDefault:"24h"`
 
-	// RequireVerifiedEmail gates TENANT CREATION on a confirmed address -- not
+	// RequireVerifiedEmail gates ORGANIZATION CREATION on a confirmed address -- not
 	// login. Locking somebody out of their own account because a verification mail
 	// went to spam is a support nightmare for very little gain; stopping an
-	// unverified address from standing up tenants is the control that matters, and
+	// unverified address from standing up organizations is the control that matters, and
 	// it doubles as abuse prevention.
 	//
 	// Turn it off if you verify out of band (SSO, an invite-only product).
 	RequireVerifiedEmail bool `env:"AUTH_REQUIRE_VERIFIED_EMAIL" envDefault:"true"`
 
-	// MaxTenantsPerUser caps how many live tenants one account may belong to.
-	// Without it, a single account can stand up unlimited tenants: free storage for
+	// MaxOrganizationsPerUser caps how many live organizations one account may belong to.
+	// Without it, a single account can stand up unlimited organizations: free storage for
 	// them, an abuse vector for you. 0 means no limit.
-	MaxTenantsPerUser int `env:"AUTH_MAX_TENANTS_PER_USER" envDefault:"10"`
+	MaxOrganizationsPerUser int `env:"AUTH_MAX_ORGANIZATIONS_PER_USER" envDefault:"10"`
 	// MinPasswordLength is the only password rule enforced. Length beats
 	// composition rules; see OWASP's authentication cheat sheet.
 	MinPasswordLength int `env:"AUTH_MIN_PASSWORD_LENGTH" envDefault:"12"`

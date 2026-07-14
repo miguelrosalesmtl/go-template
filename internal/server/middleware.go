@@ -50,26 +50,26 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 	})
 }
 
-// requireTenant resolves the {tenant} slug in the path, verifies the caller may
-// act in it, and puts the tenant and their role on the context.
+// requireOrganization resolves the {organization} slug in the path, verifies the caller may
+// act in it, and puts the organization and their role on the context.
 //
-// This is the single choke point for tenant authorization. Every route under
-// /api/v1/tenants/{tenant} passes through it, so no handler has to remember to
+// This is the single choke point for organization authorization. Every route under
+// /api/v1/organizations/{organization} passes through it, so no handler has to remember to
 // check membership -- and no handler can forget to.
-func (s *Server) requireTenant(next http.Handler) http.Handler {
+func (s *Server) requireOrganization(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		slug := chi.URLParam(r, "tenant")
+		slug := chi.URLParam(r, "organization")
 		user := userFrom(r.Context())
 
-		access, err := s.identity.ResolveTenant(r.Context(), user, slug)
+		access, err := s.identity.ResolveOrganization(r.Context(), user, slug)
 		if err != nil {
-			// ResolveTenant returns ErrNotFound both for a tenant that does not
+			// ResolveOrganization returns ErrNotFound both for an organization that does not
 			// exist and for one the caller cannot see, so this 404s either way.
 			s.errors.handle(w, r, err)
 			return
 		}
 
-		// A superuser entering a tenant they do not belong to. Record it BEFORE
+		// A superuser entering an organization they do not belong to. Record it BEFORE
 		// serving, so an access is logged even if the handler then panics or the
 		// client disconnects mid-response.
 		//
@@ -78,26 +78,26 @@ func (s *Server) requireTenant(next http.Handler) http.Handler {
 		// unseen, so an unauditable access must not proceed.
 		if access.ViaSuperuser {
 			if err := s.identity.RecordSuperuserAccess(
-				r.Context(), user, access.Tenant, r.Method, r.URL.Path,
+				r.Context(), user, access.Organization, r.Method, r.URL.Path,
 			); err != nil {
-				s.log.Error("could not audit superuser tenant access -- refusing the request",
+				s.log.Error("could not audit superuser organization access -- refusing the request",
 					slog.String("user_id", user.ID.String()),
-					slog.String("tenant", access.Tenant.Slug),
+					slog.String("organization", access.Organization.Slug),
 					slog.String("error", err.Error()),
 				)
 				s.errors.handle(w, r, err)
 				return
 			}
-			s.log.Warn("superuser entered a tenant they are not a member of",
+			s.log.Warn("superuser entered an organization they are not a member of",
 				slog.String("user_id", user.ID.String()),
 				slog.String("email", user.Email),
-				slog.String("tenant", access.Tenant.Slug),
+				slog.String("organization", access.Organization.Slug),
 				slog.String("method", r.Method),
 				slog.String("path", r.URL.Path),
 			)
 		}
 
-		next.ServeHTTP(w, r.WithContext(withTenant(r.Context(), access)))
+		next.ServeHTTP(w, r.WithContext(withOrganization(r.Context(), access)))
 	})
 }
 
@@ -117,7 +117,7 @@ func (s *Server) requireSuperuser(next http.Handler) http.Handler {
 }
 
 // requirePermission rejects callers who lack permission p in the request's
-// tenant. It must sit inside requireTenant, which is what resolved the caller's
+// organization. It must sit inside requireOrganization, which is what resolved the caller's
 // permission set and put it on the context.
 //
 // This is where RBAC is actually enforced. It replaced a requireRole(RoleAdmin)
