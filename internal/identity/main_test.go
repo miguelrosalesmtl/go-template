@@ -55,14 +55,47 @@ func TestMain(m *testing.M) {
 	}
 	testPool = pool
 
+	// The server suite shares this database and wipes it between tests just as this
+	// one does, so under `go test ./...` (one process per package) they must not run
+	// at the same time. Hold a suite-wide advisory lock for the whole run; the server
+	// harness takes the SAME key. Acquired before migrating, so startup cannot race
+	// either.
+	unlock := lockSuite(dsn)
+
 	if err := applyMigrations(dsn); err != nil {
+		unlock()
 		fmt.Fprintf(os.Stderr, "apply migrations: %v\n", err)
 		os.Exit(1)
 	}
 
 	code := m.Run()
+
+	unlock()
 	pool.Close()
 	os.Exit(code)
+}
+
+// suiteLockKey serializes this suite against the server suite; see the identical
+// constant and lockSuite in internal/server. They MUST match to exclude each other.
+const suiteLockKey = 918273645
+
+// lockSuite acquires the suite-wide advisory lock and returns a release func. The
+// lock is held on a dedicated single connection kept open for the whole run.
+func lockSuite(dsn string) func() {
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "lock suite: open: %v\n", err)
+		os.Exit(1)
+	}
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec(`SELECT pg_advisory_lock($1)`, suiteLockKey); err != nil {
+		fmt.Fprintf(os.Stderr, "lock suite: %v\n", err)
+		os.Exit(1)
+	}
+	return func() {
+		_, _ = db.Exec(`SELECT pg_advisory_unlock($1)`, suiteLockKey)
+		_ = db.Close()
+	}
 }
 
 // applyMigrations brings the test database up to the current schema, using the
