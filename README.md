@@ -387,7 +387,7 @@ exits; `app` waits on `service_completed_successfully`, so it can never start
 against an unmigrated database. In Kubernetes that identical container is an init
 container or a Job.
 
-To add one: create `migrations/00012_widgets.sql` with `-- +goose Up` and
+To add one: create `migrations/00002_widgets.sql` with `-- +goose Up` and
 `-- +goose Down` sections. Goose tracks what's applied in a table it owns. CI runs
 a full migrate down-to-zero-and-back, so a missing `Down` section fails the build
 rather than being discovered the day you need to roll back.
@@ -498,7 +498,7 @@ should leave the load balancer, not restart.
 
 ## Adding your own organization-scoped resource
 
-1. **Migration** — `migrations/00012_widgets.sql`, with
+1. **Migration** — `migrations/00002_widgets.sql`, with
    `organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE`.
 2. **Permissions** — add `widgets.create/read/update/delete` to the `Catalog` in
    `internal/identity/permissions.go`. `SyncPermissions` upserts them at startup.
