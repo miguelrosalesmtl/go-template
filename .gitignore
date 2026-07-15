@@ -8,6 +8,8 @@
 # Test and coverage artefacts
 *.out
 coverage.html
+# Server log written by the e2e runner (CI and the local driver).
+*.log
 
 # Editor / tooling
 .claude/
