@@ -430,13 +430,3 @@ func decodeBody(t *testing.T, rec *httptest.ResponseRecorder, dst any) {
 		t.Fatalf("decode response: %v\nbody: %s", err, rec.Body.String())
 	}
 }
-
-// errorMessage pulls the message out of the standard error envelope.
-func errorMessage(t *testing.T, rec *httptest.ResponseRecorder) string {
-	t.Helper()
-	var body struct {
-		Error string `json:"error"`
-	}
-	decodeBody(t, rec, &body)
-	return body.Error
-}

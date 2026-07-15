@@ -17,7 +17,30 @@ const (
 	userKey contextKey = iota
 	sessionKey
 	accessKey
+	apiKeyKey
 )
+
+// apiKeyContext bundles the API key a request authenticated with and the
+// organization it is bound to. requireOrganization uses it to enforce that the URL
+// names the key's own organization and to build the caller's authority from the
+// key's frozen permission scope. Its presence is also what marks a request as
+// key-authenticated rather than session-authenticated.
+type apiKeyContext struct {
+	key identity.APIKey
+	org identity.Organization
+}
+
+// withAPIKey records that this request authenticated with an API key. Called only
+// by requireAuth.
+func withAPIKey(ctx context.Context, kc apiKeyContext) context.Context {
+	return context.WithValue(ctx, apiKeyKey, kc)
+}
+
+// apiKeyFrom returns the API key context, if the request was key-authenticated.
+func apiKeyFrom(ctx context.Context) (apiKeyContext, bool) {
+	kc, ok := ctx.Value(apiKeyKey).(apiKeyContext)
+	return kc, ok
+}
 
 // withUser attaches the authenticated user. Called only by requireAuth.
 func withUser(ctx context.Context, u identity.User, s identity.Session) context.Context {

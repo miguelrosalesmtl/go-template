@@ -102,11 +102,10 @@ func TestAcceptingAnInvitationVerifiesTheAddress(t *testing.T) {
 	ctx := context.Background()
 
 	// A verified owner, so she can create the organization at all.
-	alice, err := svc.Register(ctx, "alice@example.com", goodPassword, "Alice")
-	if err != nil {
+	if _, err := svc.Register(ctx, "alice@example.com", goodPassword, "Alice"); err != nil {
 		t.Fatalf("register alice: %v", err)
 	}
-	alice, err = svc.VerifyEmail(ctx, tokenFromLink(t, testMailer.lastTo(t, "alice@example.com").Body))
+	alice, err := svc.VerifyEmail(ctx, tokenFromLink(t, testMailer.lastTo(t, "alice@example.com").Body))
 	if err != nil {
 		t.Fatalf("verify alice: %v", err)
 	}

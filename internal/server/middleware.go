@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/miguelrosalesmtl/go-template/internal/audit"
+	"github.com/miguelrosalesmtl/go-template/internal/auth"
 	"github.com/miguelrosalesmtl/go-template/internal/identity"
 )
 
@@ -30,13 +31,42 @@ func (s *Server) withAuditMeta(next http.Handler) http.Handler {
 	})
 }
 
-// requireAuth authenticates the bearer token and puts the user on the request
-// context. Everything behind it can call userFrom(ctx) unconditionally.
+// requireAuth authenticates the bearer token and puts the acting user on the
+// request context. Everything behind it can call userFrom(ctx) unconditionally.
+//
+// It accepts two kinds of credential. A session token (mtt_sess_) belongs to a
+// human and derives authority from their memberships. An API key (mtt_key_) belongs
+// to an organization, carries its own frozen permission scope, and acts AS its
+// creating user -- so userFrom still works, and the audit trail names a person,
+// tagged with the key it came through. A key is bound to one organization, so it is
+// only meaningful on organization-scoped routes; sessionOnly keeps it off the rest.
 func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := bearerToken(r)
 		if token == "" {
 			s.errors.handle(w, r, identity.ErrUnauthenticated)
+			return
+		}
+
+		if strings.HasPrefix(token, auth.APIKeyTokenPrefix) {
+			key, org, actor, err := s.identity.AuthenticateAPIKey(r.Context(), token)
+			if err != nil {
+				s.errors.handle(w, r, err)
+				return
+			}
+			// Act as the creating user (no session), and remember the key so
+			// requireOrganization can bind the request to the key's organization.
+			ctx := withUser(r.Context(), actor, identity.Session{})
+			ctx = withAPIKey(ctx, apiKeyContext{key: key, org: org})
+			// Re-stamp the audit metadata to tag every entry with the key id. The
+			// earlier withAuditMeta could not: it runs before authentication.
+			ctx = audit.WithRequestMeta(ctx, audit.RequestMeta{
+				RequestID: middleware.GetReqID(ctx),
+				IPAddress: s.clientIP(r),
+				UserAgent: r.UserAgent(),
+				APIKeyID:  &key.ID,
+			})
+			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 
@@ -50,6 +80,22 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 	})
 }
 
+// sessionOnly rejects API-key credentials. It guards the routes that only make
+// sense for a logged-in human -- account management and the staff surface -- so a
+// key scoped to one organization can never change its owner's password, create
+// organizations, or reach /admin. A key is for programmatic access to an
+// organization's own resources, and nothing more.
+func (s *Server) sessionOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := apiKeyFrom(r.Context()); ok {
+			writeError(w, http.StatusForbidden,
+				"API keys cannot be used on this endpoint; authenticate with a user session")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // requireOrganization resolves the {organization} slug in the path, verifies the caller may
 // act in it, and puts the organization and their role on the context.
 //
@@ -59,6 +105,25 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 func (s *Server) requireOrganization(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		slug := chi.URLParam(r, "organization")
+
+		// An API key is bound to exactly one organization. It may act only on that
+		// organization's URL; anything else is 404, the same answer a stranger gets,
+		// so a key cannot even confirm another organization exists. Its authority is
+		// the key's frozen scope -- no membership lookup, no roles.
+		if kc, ok := apiKeyFrom(r.Context()); ok {
+			if slug != kc.org.Slug {
+				s.errors.handle(w, r, identity.ErrNotFound)
+				return
+			}
+			access := identity.OrganizationAccess{
+				Organization: kc.org,
+				Permissions:  kc.key.Permissions,
+				ViaAPIKey:    true,
+			}
+			next.ServeHTTP(w, r.WithContext(withOrganization(r.Context(), access)))
+			return
+		}
+
 		user := userFrom(r.Context())
 
 		access, err := s.identity.ResolveOrganization(r.Context(), user, slug)

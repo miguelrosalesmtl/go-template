@@ -65,6 +65,12 @@ const (
 
 	// Audit.
 	PermAuditRead Permission = "audit.read"
+
+	// API keys. Programmatic, org-scoped credentials. Managing them is an
+	// administrative act, so they are split create/read/delete like roles.
+	PermAPIKeysRead   Permission = "apikeys.read"
+	PermAPIKeysCreate Permission = "apikeys.create"
+	PermAPIKeysDelete Permission = "apikeys.delete"
 )
 
 // CatalogEntry is one permission plus the description shown in a role editor.
@@ -100,6 +106,10 @@ var Catalog = []CatalogEntry{
 	{PermRolesDelete, "Delete custom roles"},
 
 	{PermAuditRead, "Read the organization's audit log"},
+
+	{PermAPIKeysRead, "View the organization's API keys"},
+	{PermAPIKeysCreate, "Create API keys"},
+	{PermAPIKeysDelete, "Revoke API keys"},
 }
 
 // Valid reports whether p is a permission this application actually enforces.

@@ -15,6 +15,11 @@ COMPOSE ?= docker compose
 # DSN for the throwaway test database defined in docker-compose.yml.
 TEST_DSN := postgres://app:app@localhost:5433/app?sslmode=disable
 
+# Pinned so `make lint` and CI agree, and so the config in .golangci.yml matches
+# the tool. golangci-lint is run via `go run` rather than installed: it needs no
+# separate setup and never pollutes this module's go.mod with its own dependencies.
+GOLANGCI_VERSION := v2.12.2
+
 .PHONY: help
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -60,6 +65,14 @@ vet: ## Static analysis
 .PHONY: tidy
 tidy: ## Resolve and pin dependencies
 	go mod tidy
+
+.PHONY: lint
+lint: ## Run golangci-lint (bug-catching linters; config in .golangci.yml)
+	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION) run ./...
+
+.PHONY: vulncheck
+vulncheck: ## Scan dependencies for known vulnerabilities in code you actually call
+	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
 # ---------------------------------------------------------------- test
 

@@ -19,6 +19,7 @@ const (
 	InvitationTokenPrefix    = "mtt_inv_"
 	PasswordResetTokenPrefix = "mtt_pwr_"
 	EmailVerifyTokenPrefix   = "mtt_ver_"
+	APIKeyTokenPrefix        = "mtt_key_"
 )
 
 // NewToken mints a cryptographically random bearer token and returns both the

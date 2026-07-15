@@ -30,7 +30,7 @@ the compose network Postgres is always 5432 and the app always 8080.
 | Config | `internal/settings` | One typed struct from env vars. Nothing else reads `os.Getenv`. |
 | Database | `internal/database` | pgx pool, embedded goose migrations, `InTx` helper. |
 | Passwords & tokens | `internal/auth` | argon2id hashing; opaque bearer tokens stored as SHA-256. |
-| Identity | `internal/identity` | Users, organizations, memberships, sessions, invitations, email verification, password reset. |
+| Identity | `internal/identity` | Users, organizations, memberships, sessions, API keys, invitations, email verification, password reset. |
 | **RBAC** | `internal/identity` | `permissions.go` (the code-owned catalog), `roles_service.go` (the escalation guard). |
 | Audit | `internal/audit` | Append-only (enforced by a DB trigger), records denials, searchable, keyset-paginated. |
 | Mail | `internal/mail` | One `Mailer` interface; `log` and `smtp` backends. Every token is emailed, never returned. |
@@ -110,6 +110,7 @@ permissions       organization.read  organization.update  organization.delete
                   invitations.read  invitations.create  invitations.delete
                   roles.read  roles.create  roles.update  roles.delete
                   audit.read
+                  apikeys.read  apikeys.create  apikeys.delete
                   ↑ from the Go Catalog. Not user-authored.
 
 roles             organization_id NULL → system role (owner/admin/member), immutable
@@ -163,7 +164,8 @@ One rule prevents it:
 
 `checkEscalation` in `internal/identity/roles_service.go` enforces it on *every*
 path a permission can travel: creating a role, editing a role, deleting a role,
-assigning roles to a member, and issuing an invitation (which carries a role).
+assigning roles to a member, issuing an invitation (which carries a role), and
+minting an API key (which carries a permission set).
 
 The elegance is that "only an owner may create an owner" then falls out **for
 free** — the `owner` role carries `organization.delete`, which an admin doesn't hold,
@@ -369,6 +371,36 @@ attacker far less than against bcrypt). The cost parameters live inside each
 hash, so you can raise them later: existing passwords keep verifying and are
 transparently upgraded on the owner's next login.
 
+## API keys
+
+Sessions are for people; **API keys** are the same idea for machines. A key is an
+opaque `mtt_key_…` bearer token — shown **once** at creation, stored only as its
+SHA-256 hash, exactly like a session — that a script puts in `Authorization: Bearer`.
+Managed at `/api/v1/organizations/{organization}/api-keys`.
+
+Three properties are the whole design:
+
+- **A key is scoped to one organization and carries a frozen permission set.** Not
+  a user's roles — an explicit list chosen when the key is minted (`members.read`,
+  `invitations.create`, …), stored with the same foreign key into the catalog that
+  `role_permissions` uses. Editing a role later never silently changes what a key
+  can do.
+- **You can't mint a key more powerful than yourself.** Creating one runs the same
+  escalation guard as creating a role: the caller must already hold every permission
+  they put in the key. So `apikeys.create` lets an admin issue keys, not manufacture
+  authority they lack — an admin cannot mint a key that deletes the organization.
+- **A key acts as its creating user, and dies with them.** The audit log attributes
+  a key's actions to the person who made it, tagged with `api_key_id` so automation
+  is distinguishable from the human. Deactivating that person disables their keys on
+  the next request — offboarding closes the programmatic door too. (Want org-owned
+  service accounts that outlive their creator instead? Drop the `is_active` join in
+  `AuthenticateAPIKey` (`internal/identity/apikeys_repository.go`) and make
+  `api_keys.created_by` `ON DELETE SET NULL`.)
+
+Keys work **only** on `/organizations/{organization}/…` routes — never account
+management or the `/admin` surface — and revoking one takes effect on its very next
+request, the same immediate revocation a session gets.
+
 ## Migrations
 
 Plain SQL in `migrations/`, run by [goose](https://github.com/pressly/goose),
@@ -463,6 +495,10 @@ DELETE /api/v1/organizations/{organization}/roles/{id}    roles.delete
 GET    /api/v1/organizations/{organization}/audit         audit.read
        ?action=roles.created &actor=<uuid> &from=/&to=<RFC3339> &before=<cursor>
 
+GET    /api/v1/organizations/{organization}/api-keys        apikeys.read
+POST   /api/v1/organizations/{organization}/api-keys        apikeys.create  (token shown ONCE)
+DELETE /api/v1/organizations/{organization}/api-keys/{id}   apikeys.delete
+
 GET    /api/v1/admin/organizations                    superuser: every organization, deleted ones flagged
 GET    /api/v1/admin/users                      superuser: every user
 PATCH  /api/v1/admin/users/{userID}             superuser: activate / deactivate
@@ -525,17 +561,25 @@ make test-e2e          # drives the running stack over real HTTP (needs `make up
 make cover             # same, plus an HTML coverage report
 ```
 
-**45 test functions, 83 subtests, ~2,800 lines of test** against a real Postgres,
-plus **154 HTTP assertions** across the 5 e2e suites in `scripts/e2e/`. That's
-roughly one line of test for every three of source, deliberately: the properties
-that matter here — organization isolation, the escalation guard, immediate session
-revocation, the anti-enumeration behaviour — are exactly the ones you cannot
-eyeball.
+**91 test functions, 128 subtests, ~4,500 lines of test** against a real Postgres —
+the service logic in `internal/identity` and the HTTP layer in `internal/server`
+driven end to end with `httptest` — plus **154 HTTP assertions** across the 5 e2e
+suites in `scripts/e2e/`. That's roughly one line of test for every two of source,
+deliberately: the properties that matter here — organization isolation, the
+escalation guard, immediate session revocation, API-key scoping, the anti-enumeration
+behaviour — are exactly the ones you cannot eyeball.
 
-CI (`.github/workflows/ci.yml`) runs four jobs on every push: static checks
-(`vet`, `gofmt`, `go mod tidy` freshness, `shellcheck`), tests against a real
-Postgres **plus a full migrate down-to-zero-and-back**, the e2e suites against a
+CI (`.github/workflows/ci.yml`) runs five jobs on every push: static checks
+(`vet`, `gofmt`, `go mod tidy` freshness, `shellcheck`), lint
+(`golangci-lint` + `govulncheck`), tests against a real Postgres with the race
+detector **plus a full migrate down-to-zero-and-back**, the e2e suites against a
 real running server, and a Docker image build.
+
+Linting is deliberately tuned for **signal over volume** — `golangci-lint` runs the
+bug-catching linters (`staticcheck`, `errcheck`, `gosec`, `bodyclose`, `errorlint`,
+…), not stylistic nitpicks; the set and the few documented exclusions live in
+`.golangci.yml`. Run it locally with `make lint`, and `make vulncheck` for the
+dependency scan.
 
 Two CI details worth copying if you fork the pattern:
 

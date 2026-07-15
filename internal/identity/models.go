@@ -128,6 +128,10 @@ type OrganizationAccess struct {
 	// It is separate from Permissions on purpose: a superuser's access must remain
 	// distinguishable from a genuine owner's, or it could not be audited.
 	ViaSuperuser bool `json:"via_superuser,omitempty"`
+	// ViaAPIKey reports that access came from an API key rather than a logged-in
+	// human. Permissions is then the key's frozen scope, and Roles is empty -- a key
+	// holds no role, only the permissions it was minted with.
+	ViaAPIKey bool `json:"via_api_key,omitempty"`
 }
 
 // Can reports whether the caller may perform p in this organization. This is the single
@@ -242,6 +246,24 @@ type Invitation struct {
 // accepted, not revoked, not expired.
 func (i Invitation) Pending(now time.Time) bool {
 	return i.AcceptedAt == nil && i.RevokedAt == nil && i.ExpiresAt.After(now)
+}
+
+// APIKey is a programmatic, organization-scoped credential. It authenticates like
+// a session -- the plaintext token is shown once and only its hash is stored -- but
+// carries its own frozen set of permissions rather than a user's roles.
+type APIKey struct {
+	ID             uuid.UUID `json:"id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Name           string    `json:"name"`
+	// TokenPrefix is a short, non-secret slice of the plaintext, so a key is
+	// identifiable in a list without ever revealing the whole secret again.
+	TokenPrefix string        `json:"token_prefix"`
+	Permissions PermissionSet `json:"permissions"`
+	CreatedBy   uuid.UUID     `json:"created_by"`
+	ExpiresAt   *time.Time    `json:"expires_at,omitempty"`
+	LastUsedAt  *time.Time    `json:"last_used_at,omitempty"`
+	RevokedAt   *time.Time    `json:"revoked_at,omitempty"`
+	CreatedAt   time.Time     `json:"created_at"`
 }
 
 // unionPermissions returns the combined permissions of a set of roles. This is

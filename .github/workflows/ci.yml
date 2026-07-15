@@ -61,6 +61,27 @@ jobs:
           #   SC2181  $? checks, and SC2015 A && B || C -- idiomatic in these scripts.
           shellcheck -e SC2086,SC2317,SC2181,SC2015 scripts/e2e/*.sh
 
+  # ---------------------------------------------------------------- lint
+  lint:
+    name: lint, vulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # golangci-lint runs the bug-catching linters in .golangci.yml. Invoked via
+      # `go run` (pinned in the Makefile), so nothing is installed and the linter's
+      # own dependencies never enter this module's go.mod.
+      - name: golangci-lint
+        run: make lint
+
+      # Known CVEs in dependencies, narrowed to the ones this code actually calls.
+      - name: govulncheck
+        run: make vulncheck
+
   # ---------------------------------------------------------------- tests
   test:
     name: tests (real Postgres)

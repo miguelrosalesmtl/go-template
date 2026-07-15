@@ -1,0 +1,52 @@
+# golangci-lint v2 configuration.
+#
+# The bias here is SIGNAL over volume: the linters below catch bugs and real
+# mistakes, not stylistic preferences. Formatting is already enforced by gofmt in
+# CI, and this project prefers a few high-confidence findings to a wall of nits.
+#
+# Run it with `make lint`. CI runs the same set on every push.
+version: "2"
+
+linters:
+  # The default set is errcheck, govet, ineffassign, staticcheck, unused --
+  # already the core of what you want.
+  default: standard
+  enable:
+    - errorlint      # correct error wrapping and errors.Is/As usage
+    - gosec          # security anti-patterns -- worth it for an auth/audit codebase
+    - bodyclose      # HTTP response bodies that are never closed
+    - noctx          # HTTP/DB calls that should carry a context but do not
+    - rowserrcheck   # sql.Rows whose .Err() is never checked
+    - sqlclosecheck  # sql.Rows/Stmt that are never closed
+    - misspell       # typos in comments and strings
+    - nilerr         # returning nil after checking err != nil, and vice versa
+    - unparam        # function parameters that are always the same or unused
+
+  exclusions:
+    generated: lax
+    rules:
+      # Test code gets more slack: it fabricates inputs, ignores errors on
+      # best-effort cleanup (deferred Close), and makes requests without a real
+      # context.
+      - path: _test\.go
+        linters:
+          - gosec
+          - noctx
+          - unparam
+          - errcheck
+
+      # gosec G101 flags the token PREFIXES as "hardcoded credentials". They are
+      # the opposite of secret -- public, product-identifying prefixes that make a
+      # leaked token recognisable on sight. The heuristic just sees "Token" in the
+      # name next to a string literal.
+      - path: internal/auth/token\.go
+        text: "G101"
+
+      # gosec G115 flags int -> uint32 on len(hash). A password/argon2 hash length
+      # is a tiny constant; it cannot overflow uint32.
+      - path: internal/auth/password\.go
+        text: "G115"
+
+formatters:
+  enable:
+    - gofmt

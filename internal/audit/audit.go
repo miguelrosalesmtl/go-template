@@ -84,6 +84,13 @@ const (
 	ActionRoleUpdated Action = "roles.updated"
 	ActionRoleDeleted Action = "roles.deleted"
 
+	// --- API keys ---
+	// Minting a key hands out programmatic authority, so both ends of its life are
+	// recorded. Actions taken WITH a key are attributed to its creating user and
+	// tagged with api_key_id in their metadata (see RequestMeta).
+	ActionAPIKeyCreated Action = "apikeys.created"
+	ActionAPIKeyRevoked Action = "apikeys.revoked"
+
 	// --- Superuser ---
 	// The only ways a person can act outside the organizations they belong to. If you
 	// alert on one thing in this list, alert on ActionSuperuserOrganizationAccessed.
@@ -172,6 +179,11 @@ type RequestMeta struct {
 	RequestID string
 	IPAddress string
 	UserAgent string
+	// APIKeyID is set when the request authenticated with an API key rather than a
+	// human session. When present, Record tags every entry it writes with it, so an
+	// action taken by automation is distinguishable from one taken by the person who
+	// owns the key -- the actor is the same user either way.
+	APIKeyID *uuid.UUID
 }
 
 type contextKey int
@@ -233,6 +245,13 @@ func (r *Recorder) Record(ctx context.Context, e Event) error {
 	metadata := e.Metadata
 	if metadata == nil {
 		metadata = map[string]any{}
+	}
+	// Attribute the action to the API key it came through, if any. The actor is
+	// still the key's owner; this records that it was their automation, not them.
+	if meta.APIKeyID != nil {
+		if _, set := metadata["api_key_id"]; !set {
+			metadata["api_key_id"] = meta.APIKeyID.String()
+		}
 	}
 	raw, err := json.Marshal(metadata)
 	if err != nil {

@@ -142,6 +142,10 @@ func (s *Server) routes() http.Handler {
 		// who they are, list their organizations, make one, or accept an invitation.
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAuth)
+			// Account management is for a logged-in human, never an API key: a key
+			// scoped to one organization must not be able to change its owner's
+			// password or spin up new organizations.
+			r.Use(s.sessionOnly)
 
 			r.Post("/auth/logout", s.handleLogout)
 			r.Get("/auth/me", s.handleMe)
@@ -175,6 +179,9 @@ func (s *Server) routes() http.Handler {
 		// There is deliberately no route to GRANT superuser: see the CLI.
 		r.Route("/admin", func(r chi.Router) {
 			r.Use(s.requireAuth)
+			// The staff surface is superuser-only and human-only; an API key never
+			// reaches across organizations.
+			r.Use(s.sessionOnly)
 			r.Use(s.requireSuperuser)
 
 			r.Get("/organizations", s.handleAdminListOrganizations)
@@ -248,6 +255,17 @@ func (s *Server) routes() http.Handler {
 
 			r.With(s.requirePermission(identity.PermAuditRead)).
 				Get("/audit", s.handleListAuditLog)
+
+			// API keys: programmatic credentials scoped to this organization. Minting
+			// one is additionally subject to the escalation guard in the service --
+			// apikeys.create lets you make a key, it does not let you make one more
+			// powerful than you are.
+			r.With(s.requirePermission(identity.PermAPIKeysRead)).
+				Get("/api-keys", s.handleListAPIKeys)
+			r.With(s.requirePermission(identity.PermAPIKeysCreate)).
+				Post("/api-keys", s.handleCreateAPIKey)
+			r.With(s.requirePermission(identity.PermAPIKeysDelete)).
+				Delete("/api-keys/{keyID}", s.handleRevokeAPIKey)
 		})
 	})
 

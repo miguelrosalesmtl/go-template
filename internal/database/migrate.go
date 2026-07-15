@@ -1,9 +1,11 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"time"
 
 	// pgx's database/sql driver, required because goose is built on database/sql
 	// rather than on pgx's native interface.
@@ -29,9 +31,11 @@ func Migrate(cfg settings.Postgres, direction string, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("database: open migration connection: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
-	if err := db.Ping(); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := db.PingContext(ctx); err != nil {
 		return fmt.Errorf("database: ping for migration: %w", err)
 	}
 

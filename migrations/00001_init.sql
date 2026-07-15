@@ -1,6 +1,6 @@
 -- Squashed baseline: the schema and seed data produced by the original
--- migrations 00001-00011, captured with pg_dump. The annotated, incremental
--- history is preserved in git before this commit.
+-- incremental migrations, captured with pg_dump. The annotated history is
+-- preserved in git before the squash commit.
 
 -- +goose Up
 --
@@ -108,6 +108,34 @@ $$;
 -- +goose StatementEnd
 
 
+
+
+--
+-- Name: api_key_permissions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_key_permissions (
+    api_key_id uuid NOT NULL,
+    permission text NOT NULL
+);
+
+
+--
+-- Name: api_keys; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_keys (
+    id uuid DEFAULT uuidv7() NOT NULL,
+    organization_id uuid NOT NULL,
+    name text NOT NULL,
+    token_hash bytea NOT NULL,
+    token_prefix text NOT NULL,
+    created_by uuid NOT NULL,
+    expires_at timestamp with time zone,
+    last_used_at timestamp with time zone,
+    revoked_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
 
 
 --
@@ -288,6 +316,30 @@ CREATE TABLE public.users (
 
 
 --
+-- Name: api_key_permissions api_key_permissions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_key_permissions
+    ADD CONSTRAINT api_key_permissions_pkey PRIMARY KEY (api_key_id, permission);
+
+
+--
+-- Name: api_keys api_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_keys
+    ADD CONSTRAINT api_keys_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: api_keys api_keys_token_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_keys
+    ADD CONSTRAINT api_keys_token_hash_key UNIQUE (token_hash);
+
+
+--
 -- Name: audit_log audit_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -432,6 +484,13 @@ ALTER TABLE ONLY public.users
 
 
 --
+-- Name: api_keys_organization_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_keys_organization_id_idx ON public.api_keys USING btree (organization_id) WHERE (revoked_at IS NULL);
+
+
+--
 -- Name: audit_log_global_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -569,6 +628,38 @@ CREATE TRIGGER audit_log_append_only BEFORE DELETE OR UPDATE ON public.audit_log
 --
 
 CREATE TRIGGER audit_log_no_truncate BEFORE TRUNCATE ON public.audit_log FOR EACH STATEMENT EXECUTE FUNCTION public.audit_log_no_truncate();
+
+
+--
+-- Name: api_key_permissions api_key_permissions_api_key_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_key_permissions
+    ADD CONSTRAINT api_key_permissions_api_key_id_fkey FOREIGN KEY (api_key_id) REFERENCES public.api_keys(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_key_permissions api_key_permissions_permission_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_key_permissions
+    ADD CONSTRAINT api_key_permissions_permission_fkey FOREIGN KEY (permission) REFERENCES public.permissions(key) ON DELETE RESTRICT;
+
+
+--
+-- Name: api_keys api_keys_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_keys
+    ADD CONSTRAINT api_keys_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_keys api_keys_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_keys
+    ADD CONSTRAINT api_keys_organization_id_fkey FOREIGN KEY (organization_id) REFERENCES public.organizations(id) ON DELETE CASCADE;
 
 
 --
@@ -713,6 +804,9 @@ INSERT INTO public.permissions VALUES ('members.delete', 'Remove members from th
 INSERT INTO public.permissions VALUES ('roles.create', 'Create custom roles', '2026-07-15 00:09:52.114943+00');
 INSERT INTO public.permissions VALUES ('roles.update', 'Edit custom roles', '2026-07-15 00:09:52.114943+00');
 INSERT INTO public.permissions VALUES ('roles.delete', 'Delete custom roles', '2026-07-15 00:09:52.114943+00');
+INSERT INTO public.permissions VALUES ('apikeys.read', 'View the organization''s API keys', '2026-07-15 00:56:12.360142+00');
+INSERT INTO public.permissions VALUES ('apikeys.create', 'Create API keys', '2026-07-15 00:56:12.360142+00');
+INSERT INTO public.permissions VALUES ('apikeys.delete', 'Revoke API keys', '2026-07-15 00:56:12.360142+00');
 INSERT INTO public.roles VALUES ('019f631b-c4ef-70f1-b9d6-de3c13e92074', NULL, 'owner', 'Owner', true, '2026-07-15 00:09:52.103097+00', '2026-07-15 00:09:52.103097+00');
 INSERT INTO public.roles VALUES ('019f631b-c4ef-7214-8bd3-85b45843f531', NULL, 'admin', 'Admin', true, '2026-07-15 00:09:52.103097+00', '2026-07-15 00:09:52.103097+00');
 INSERT INTO public.roles VALUES ('019f631b-c4ef-7225-a428-689600b42bc8', NULL, 'member', 'Member', true, '2026-07-15 00:09:52.103097+00', '2026-07-15 00:09:52.103097+00');
@@ -745,9 +839,15 @@ INSERT INTO public.role_permissions VALUES ('019f631b-c4ef-70f1-b9d6-de3c13e9207
 INSERT INTO public.role_permissions VALUES ('019f631b-c4ef-70f1-b9d6-de3c13e92074', 'invitations.delete');
 INSERT INTO public.role_permissions VALUES ('019f631b-c4ef-7214-8bd3-85b45843f531', 'invitations.read');
 INSERT INTO public.role_permissions VALUES ('019f631b-c4ef-7214-8bd3-85b45843f531', 'invitations.delete');
+INSERT INTO public.role_permissions VALUES ('019f631b-c4ef-7214-8bd3-85b45843f531', 'apikeys.read');
+INSERT INTO public.role_permissions VALUES ('019f631b-c4ef-7214-8bd3-85b45843f531', 'apikeys.create');
+INSERT INTO public.role_permissions VALUES ('019f631b-c4ef-7214-8bd3-85b45843f531', 'apikeys.delete');
+INSERT INTO public.role_permissions VALUES ('019f631b-c4ef-70f1-b9d6-de3c13e92074', 'apikeys.read');
+INSERT INTO public.role_permissions VALUES ('019f631b-c4ef-70f1-b9d6-de3c13e92074', 'apikeys.create');
+INSERT INTO public.role_permissions VALUES ('019f631b-c4ef-70f1-b9d6-de3c13e92074', 'apikeys.delete');
 
 -- +goose Down
-DROP TABLE IF EXISTS public.audit_log, public.email_verifications, public.invitations, public.membership_roles, public.memberships, public.organizations, public.password_resets, public.role_permissions, public.roles, public.sessions, public.users, public.permissions CASCADE;
+DROP TABLE IF EXISTS public.api_key_permissions,public.api_keys,public.audit_log,public.email_verifications,public.invitations,public.membership_roles,public.memberships,public.organizations,public.password_resets,public.permissions,public.role_permissions,public.roles,public.sessions,public.users CASCADE;
 DROP FUNCTION IF EXISTS public.audit_log_is_append_only() CASCADE;
 DROP FUNCTION IF EXISTS public.audit_log_no_truncate() CASCADE;
 DROP EXTENSION IF EXISTS citext;

@@ -64,13 +64,13 @@ func main() {
 	case "":
 		err = run()
 	default:
-		os.Stderr.WriteString("unknown subcommand " + subcommand + "\n" + usage)
+		_, _ = os.Stderr.WriteString("unknown subcommand " + subcommand + "\n" + usage)
 		os.Exit(2)
 	}
 
 	if err != nil {
 		// The logger may not exist yet if settings failed, so fall back to stderr.
-		os.Stderr.WriteString("fatal: " + err.Error() + "\n")
+		_, _ = os.Stderr.WriteString("fatal: " + err.Error() + "\n")
 		os.Exit(1)
 	}
 }
