@@ -49,7 +49,9 @@ roleid() { req GET /organizations/acme/roles "$1" >/dev/null; jq -r ".roles[]|se
 echo "== the catalog is now resource.action CRUD =="
 code=$(req GET /permissions -)
 check "permission catalog" 200 "$code"
-check "14 permissions" 14 "$(jq '.permissions|length' /tmp/body)"
+# Derived so growing the catalog never breaks the "owner holds everything" checks.
+NPERMS=$(jq '.permissions|length' /tmp/body)
+check "catalog includes the api-key permissions" "true" "$(jq '.permissions|any(.key=="apikeys.create")' /tmp/body)"
 echo "        $(jq -r '.permissions[].key' /tmp/body | tr '\n' ' ')"
 check "roles.manage is gone" "false" "$(jq '.permissions|any(.key=="roles.manage")' /tmp/body)"
 check "roles.create exists" "true" "$(jq '.permissions|any(.key=="roles.create")' /tmp/body)"
@@ -65,7 +67,7 @@ TOK=$(invite_token); req POST /invitations/accept "$MALLORY" "{\"token\":\"$TOK\
 
 echo "== the owner really does hold every permission (the bug the tests caught) =="
 code=$(req GET /organizations/acme "$ALICE")
-check "owner holds all 14" 14 "$(jq '.permissions|length' /tmp/body)"
+check "owner holds every permission" "$NPERMS" "$(jq '.permissions|length' /tmp/body)"
 check "  ...including invitations.delete" "true" "$(jq '.permissions|any(.=="invitations.delete")' /tmp/body)"
 
 echo "== organization update: name only, slug immutable =="
@@ -172,7 +174,7 @@ check "  ...new slug" "acme-original" "$(jqr .slug)"
 code=$(req GET /organizations/acme-original "$ALICE")
 check "the owner has her organization back" 200 "$code"
 check "  ...still owner, whole" "true" "$(jq '.roles|any(.key=="owner")' /tmp/body)"
-check "  ...with all 14 permissions" 14 "$(jq '.permissions|length' /tmp/body)"
+check "  ...with every permission" "$NPERMS" "$(jq '.permissions|length' /tmp/body)"
 
 echo
 echo "======================================"

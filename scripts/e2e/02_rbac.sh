@@ -57,11 +57,15 @@ OWNER_ID=$(roleid "$ALICE" owner)
 ADMIN_ID=$(roleid "$ALICE" admin)
 MEMBER_ID=$(roleid "$ALICE" member)
 
+# Derive the catalog size from the API, so adding a permission never silently
+# breaks the "owner holds everything" assertions below.
+NPERMS=$(req GET /permissions - >/dev/null; jq '.permissions|length' /tmp/body)
+
 echo "== system roles ship seeded =="
 code=$(req GET /organizations/acme/roles "$ALICE")
 check "list roles" 200 "$code"
 check "3 system roles exist" 3 "$(jq '[.roles[]|select(.is_system)]|length' /tmp/body)"
-check "owner holds all 14 permissions" 14 "$(jq '[.roles[]|select(.key=="owner")][0].permissions|length' /tmp/body)"
+check "owner holds every permission" "$NPERMS" "$(jq '[.roles[]|select(.key=="owner")][0].permissions|length' /tmp/body)"
 check "admin lacks organization.delete" "false" "$(jq '[.roles[]|select(.key=="admin")][0].permissions|any(.=="organization.delete")' /tmp/body)"
 check "member holds only 2" 2 "$(jq '[.roles[]|select(.key=="member")][0].permissions|length' /tmp/body)"
 

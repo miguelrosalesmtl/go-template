@@ -82,13 +82,16 @@ code=$(req GET /admin/users "$ROOT")
 check "staff surface: list all users" 200 "$code"
 check "sees both users" 2 "$(jq '.users|length' /tmp/body)"
 
+# The catalog size, derived so a new permission does not break the check below.
+NPERMS=$(req GET /permissions - >/dev/null; jq '.permissions|length' /tmp/body)
+
 echo "== organization bypass =="
 code=$(req GET /organizations/acme "$ROOT")
 check "superuser enters acme without membership" 200 "$code"
 # A superuser holds NO role -- they are not a member of anything. They hold the
 # entire permission catalog instead, which is what makes every check pass.
 check "  ...holding no role (not a member)" 0 "$(jq '.roles|length' /tmp/body)"
-check "  ...but the full permission set" 14 "$(jq '.permissions|length' /tmp/body)"
+check "  ...but the full permission set" "$NPERMS" "$(jq '.permissions|length' /tmp/body)"
 check "  ...flagged via_superuser" "true" "$(jqr .via_superuser)"
 code=$(req GET /organizations/acme/members "$ROOT")
 check "superuser lists acme's members" 200 "$code"

@@ -79,7 +79,13 @@ jobs:
         run: make lint
 
       # Known CVEs in dependencies, narrowed to the ones this code actually calls.
+      #
+      # Advisory, not blocking. A CVE can be disclosed at any time -- often in the Go
+      # standard library, fixed only by a new toolchain release -- and that should
+      # surface here without red-walling an unrelated change. Watch the step's output
+      # and act (bump a dependency, or the Go version) when a fix is available.
       - name: govulncheck
+        continue-on-error: true
         run: make vulncheck
 
   # ---------------------------------------------------------------- tests
