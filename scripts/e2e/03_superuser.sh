@@ -44,9 +44,9 @@ logs() { ${APP_LOGS:-docker compose logs app} 2>&1; }
 login() { req POST /auth/login - "{\"email\":\"$1\",\"password\":\"correct-horse-battery\"}" >/dev/null; jqr .token; }
 
 echo "== setup: alice owns acme, root is a plain user =="
-req POST /auth/register - '{"email":"alice@example.com","password":"correct-horse-battery","full_name":"Alice"}' >/dev/null
+req POST /auth/register - '{"email":"alice@example.com","password":"correct-horse-battery","first_name":"Alice","last_name":""}' >/dev/null
 verify_last
-req POST /auth/register - '{"email":"root@example.com","password":"correct-horse-battery","full_name":"Root"}' >/dev/null
+req POST /auth/register - '{"email":"root@example.com","password":"correct-horse-battery","first_name":"Root","last_name":""}' >/dev/null
 verify_last
 ALICE=$(login alice@example.com)
 ROOT=$(login root@example.com)

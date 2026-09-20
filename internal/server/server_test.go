@@ -132,14 +132,14 @@ func TestRegister(t *testing.T) {
 
 	t.Run("creates an account", func(t *testing.T) {
 		rec := h.req(http.MethodPost, "/api/v1/auth/register", "", map[string]string{
-			"email": "new@example.com", "password": testPassword, "full_name": "New",
+			"email": "new@example.com", "password": testPassword, "first_name": "New", "last_name": "",
 		})
 		mustStatus(t, rec, http.StatusCreated)
 	})
 
 	t.Run("duplicate email is 409", func(t *testing.T) {
 		rec := h.req(http.MethodPost, "/api/v1/auth/register", "", map[string]string{
-			"email": "new@example.com", "password": testPassword, "full_name": "New",
+			"email": "new@example.com", "password": testPassword, "first_name": "New", "last_name": "",
 		})
 		mustStatus(t, rec, http.StatusConflict)
 	})

@@ -111,7 +111,7 @@ func TestDeleteFreesTheSlugAndRestoreCopes(t *testing.T) {
 	}
 
 	t.Run("the slug can be claimed by somebody else", func(t *testing.T) {
-		bob, err := svc.Register(ctx, "bob@example.com", goodPassword, "Bob")
+		bob, err := svc.Register(ctx, "bob@example.com", goodPassword, "Bob", "")
 		if err != nil {
 			t.Fatalf("register bob: %v", err)
 		}

@@ -12,7 +12,7 @@ func TestRegisterAndLogin(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
-	user, err := svc.Register(ctx, "Alice@Example.COM ", goodPassword, "Alice")
+	user, err := svc.Register(ctx, "Alice@Example.COM ", goodPassword, "Alice", "")
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -27,11 +27,11 @@ func TestRegisterAndLogin(t *testing.T) {
 	}
 
 	t.Run("duplicate email is rejected", func(t *testing.T) {
-		if _, err := svc.Register(ctx, "alice@example.com", goodPassword, ""); !errors.Is(err, ErrEmailTaken) {
+		if _, err := svc.Register(ctx, "alice@example.com", goodPassword, "", ""); !errors.Is(err, ErrEmailTaken) {
 			t.Errorf("got %v, want ErrEmailTaken", err)
 		}
 		// Including under different capitalisation -- citext is what guarantees it.
-		if _, err := svc.Register(ctx, "ALICE@EXAMPLE.COM", goodPassword, ""); !errors.Is(err, ErrEmailTaken) {
+		if _, err := svc.Register(ctx, "ALICE@EXAMPLE.COM", goodPassword, "", ""); !errors.Is(err, ErrEmailTaken) {
 			t.Errorf("got %v, want ErrEmailTaken for a differently-cased duplicate", err)
 		}
 	})
@@ -90,7 +90,7 @@ func TestLogoutRevokesOnlyThatSession(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
-	user, err := svc.Register(ctx, "alice@example.com", goodPassword, "Alice")
+	user, err := svc.Register(ctx, "alice@example.com", goodPassword, "Alice", "")
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestChangePasswordRevokesEverySession(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
-	user, err := svc.Register(ctx, "alice@example.com", goodPassword, "Alice")
+	user, err := svc.Register(ctx, "alice@example.com", goodPassword, "Alice", "")
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestCreateOrganizationMakesTheCreatorOwner(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
-	alice, err := svc.Register(ctx, "alice@example.com", goodPassword, "Alice")
+	alice, err := svc.Register(ctx, "alice@example.com", goodPassword, "Alice", "")
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}

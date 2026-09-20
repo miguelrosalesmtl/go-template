@@ -50,15 +50,15 @@ logs() { ${APP_LOGS:-docker compose logs app} 2>&1; }
 roleid() { req GET "/organizations/$1/roles" "$2" >/dev/null; jq -r ".roles[]|select(.key==\"$3\").id" /tmp/body; }
 
 echo "== register =="
-code=$(req POST /auth/register - '{"email":"alice@example.com","password":"correct-horse-battery","full_name":"Alice"}')
+code=$(req POST /auth/register - '{"email":"alice@example.com","password":"correct-horse-battery","first_name":"Alice","last_name":""}')
 check "register alice" 201 "$code"
 verify_last
 code=$(req POST /auth/register - '{"email":"alice@example.com","password":"correct-horse-battery"}')
 check "duplicate email -> 409" 409 "$code"
-code=$(req POST /auth/register - '{"email":"bob@example.com","password":"correct-horse-battery","full_name":"Bob"}')
+code=$(req POST /auth/register - '{"email":"bob@example.com","password":"correct-horse-battery","first_name":"Bob","last_name":""}')
 check "register bob" 201 "$code"
 verify_last
-code=$(req POST /auth/register - '{"email":"carol@example.com","password":"correct-horse-battery","full_name":"Carol"}')
+code=$(req POST /auth/register - '{"email":"carol@example.com","password":"correct-horse-battery","first_name":"Carol","last_name":""}')
 check "register carol" 201 "$code"
 verify_last
 code=$(req POST /auth/register - '{"email":"x@example.com","password":"short"}')

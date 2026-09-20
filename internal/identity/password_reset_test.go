@@ -11,7 +11,7 @@ func TestPasswordResetFlow(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
-	user, err := svc.Register(ctx, "alice@example.com", goodPassword, "Alice")
+	user, err := svc.Register(ctx, "alice@example.com", goodPassword, "Alice", "")
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -94,14 +94,14 @@ func TestPasswordResetRevealsNothing(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
-	if _, err := svc.Register(ctx, "alice@example.com", goodPassword, "Alice"); err != nil {
+	if _, err := svc.Register(ctx, "alice@example.com", goodPassword, "Alice", ""); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 
 	// A real account, an address that has never been seen, and a deactivated user.
 	// All three must return nil, and all three must be indistinguishable.
 	root := makeSuperuser(t, svc, "root@example.com")
-	deactivated, err := svc.Register(ctx, "gone@example.com", goodPassword, "Gone")
+	deactivated, err := svc.Register(ctx, "gone@example.com", goodPassword, "Gone", "")
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestOnlyTheNewestResetLinkWorks(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
-	if _, err := svc.Register(ctx, "alice@example.com", goodPassword, "Alice"); err != nil {
+	if _, err := svc.Register(ctx, "alice@example.com", goodPassword, "Alice", ""); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 
@@ -215,7 +215,7 @@ func TestInvitationTokenIsEmailedNotReturned(t *testing.T) {
 
 	// And the emailed token is the real one.
 	token := tokenFromLink(t, msg.Body)
-	carol, err := svc.Register(ctx, "carol@example.com", goodPassword, "Carol")
+	carol, err := svc.Register(ctx, "carol@example.com", goodPassword, "Carol", "")
 	if err != nil {
 		t.Fatalf("register carol: %v", err)
 	}

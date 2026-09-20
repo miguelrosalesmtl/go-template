@@ -35,7 +35,7 @@ func TestEmailVerification(t *testing.T) {
 	svc := gatedService(t, 0)
 	ctx := context.Background()
 
-	alice, err := svc.Register(ctx, "alice@example.com", goodPassword, "Alice")
+	alice, err := svc.Register(ctx, "alice@example.com", goodPassword, "Alice", "")
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestAcceptingAnInvitationVerifiesTheAddress(t *testing.T) {
 	ctx := context.Background()
 
 	// A verified owner, so she can create the organization at all.
-	if _, err := svc.Register(ctx, "alice@example.com", goodPassword, "Alice"); err != nil {
+	if _, err := svc.Register(ctx, "alice@example.com", goodPassword, "Alice", ""); err != nil {
 		t.Fatalf("register alice: %v", err)
 	}
 	alice, err := svc.VerifyEmail(ctx, tokenFromLink(t, testMailer.lastTo(t, "alice@example.com").Body))
@@ -115,7 +115,7 @@ func TestAcceptingAnInvitationVerifiesTheAddress(t *testing.T) {
 	}
 
 	// Carol registers and does NOT click her verification link.
-	carol, err := svc.Register(ctx, "carol@example.com", goodPassword, "Carol")
+	carol, err := svc.Register(ctx, "carol@example.com", goodPassword, "Carol", "")
 	if err != nil {
 		t.Fatalf("register carol: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestOrganizationCap(t *testing.T) {
 	svc := gatedService(t, 2)
 	ctx := context.Background()
 
-	alice, err := svc.Register(ctx, "alice@example.com", goodPassword, "Alice")
+	alice, err := svc.Register(ctx, "alice@example.com", goodPassword, "Alice", "")
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -186,7 +186,7 @@ func TestRevokeOneSession(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
-	alice, err := svc.Register(ctx, "alice@example.com", goodPassword, "Alice")
+	alice, err := svc.Register(ctx, "alice@example.com", goodPassword, "Alice", "")
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -227,7 +227,7 @@ func TestRevokeOneSession(t *testing.T) {
 	// The user id is in the WHERE clause, so you cannot revoke a stranger's session
 	// by guessing its id.
 	t.Run("cannot revoke somebody else's session", func(t *testing.T) {
-		bob, err := svc.Register(ctx, "bob@example.com", goodPassword, "Bob")
+		bob, err := svc.Register(ctx, "bob@example.com", goodPassword, "Bob", "")
 		if err != nil {
 			t.Fatalf("register bob: %v", err)
 		}

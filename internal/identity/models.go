@@ -60,9 +60,10 @@ const (
 // same person can be an owner of one organization and a member of another, under one
 // account and one password.
 type User struct {
-	ID       uuid.UUID `json:"id"`
-	Email    string    `json:"email"`
-	FullName string    `json:"full_name"`
+	ID        uuid.UUID `json:"id"`
+	Email     string    `json:"email"`
+	FirstName string    `json:"first_name"`
+	LastName  string    `json:"last_name"`
 
 	// IsSuperuser is the only global privilege in the system -- the operator of
 	// the whole installation, not of any one organization. It grants two things:
@@ -191,10 +192,11 @@ type Membership struct {
 // Member is a membership joined with the user it points at and the roles they
 // hold -- what the "list this organization's members" endpoint returns.
 type Member struct {
-	UserID   uuid.UUID `json:"user_id"`
-	Email    string    `json:"email"`
-	FullName string    `json:"full_name"`
-	Roles    []Role    `json:"roles"`
+	UserID    uuid.UUID `json:"user_id"`
+	Email     string    `json:"email"`
+	FirstName string    `json:"first_name"`
+	LastName  string    `json:"last_name"`
+	Roles     []Role    `json:"roles"`
 	// Permissions is the union of the member's roles, so a UI can show what
 	// somebody can actually do without recomputing it.
 	Permissions PermissionSet `json:"permissions"`

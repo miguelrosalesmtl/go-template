@@ -18,9 +18,10 @@ import (
 // ---------------------------------------------------------------- auth
 
 type registerRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-	FullName string `json:"full_name"`
+	Email     string `json:"email"`
+	Password  string `json:"password"`
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
 }
 
 // handleRegister creates a global user account. It does not log them in.
@@ -34,7 +35,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := s.identity.Register(r.Context(), req.Email, req.Password, req.FullName)
+	user, err := s.identity.Register(r.Context(), req.Email, req.Password, req.FirstName, req.LastName)
 	if err != nil {
 		s.errors.handle(w, r, err)
 		return

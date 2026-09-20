@@ -16,7 +16,7 @@ func makeSuperuser(t *testing.T, svc *Service, email string) User {
 	t.Helper()
 	ctx := context.Background()
 
-	if _, err := svc.Register(ctx, email, goodPassword, "Root"); err != nil {
+	if _, err := svc.Register(ctx, email, goodPassword, "Root", ""); err != nil {
 		t.Fatalf("register %s: %v", email, err)
 	}
 	root, err := svc.SetSuperuser(ctx, email, true)
@@ -116,7 +116,7 @@ func TestDeactivationIsImmediate(t *testing.T) {
 	ctx := context.Background()
 
 	root := makeSuperuser(t, svc, "root@example.com")
-	alice, err := svc.Register(ctx, "alice@example.com", goodPassword, "Alice")
+	alice, err := svc.Register(ctx, "alice@example.com", goodPassword, "Alice", "")
 	if err != nil {
 		t.Fatalf("register alice: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestSuperuserGrantAndRevoke(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
-	if _, err := svc.Register(ctx, "alice@example.com", goodPassword, "Alice"); err != nil {
+	if _, err := svc.Register(ctx, "alice@example.com", goodPassword, "Alice", ""); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 

@@ -69,7 +69,7 @@ type RequestMeta struct {
 
 // Register creates a global user account. It does not create or join an organization:
 // the new user then either creates their own organization or accepts an invitation.
-func (s *Service) Register(ctx context.Context, email, password, fullName string) (User, error) {
+func (s *Service) Register(ctx context.Context, email, password, firstName, lastName string) (User, error) {
 	email, err := normalizeEmail(email)
 	if err != nil {
 		return User{}, err
@@ -87,7 +87,7 @@ func (s *Service) Register(ctx context.Context, email, password, fullName string
 	err = database.InTx(ctx, s.pool, func(db database.DB) error {
 		repo := NewRepository(db)
 
-		user, err = repo.CreateUser(ctx, email, hash, strings.TrimSpace(fullName))
+		user, err = repo.CreateUser(ctx, email, hash, strings.TrimSpace(firstName), strings.TrimSpace(lastName))
 		if err != nil {
 			return err
 		}

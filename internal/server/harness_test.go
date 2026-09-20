@@ -339,7 +339,7 @@ func (h *harness) reqOrigin(method, path, origin string) *httptest.ResponseRecor
 func (h *harness) register(email string) uuid.UUID {
 	h.t.Helper()
 	rec := h.req(http.MethodPost, "/api/v1/auth/register", "", map[string]string{
-		"email": email, "password": testPassword, "full_name": "Test User",
+		"email": email, "password": testPassword, "first_name": "Test", "last_name": "User",
 	})
 	mustStatus(h.t, rec, http.StatusCreated)
 	var u struct {

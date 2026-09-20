@@ -119,7 +119,7 @@ func TestFailedLoginsAreAudited(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
-	alice, err := svc.Register(ctx, "alice@example.com", goodPassword, "Alice")
+	alice, err := svc.Register(ctx, "alice@example.com", goodPassword, "Alice", "")
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}

@@ -26,7 +26,7 @@ func joinOrganization(t *testing.T, svc *Service, inviter User, organization Org
 	// the message, exactly as the invitee would read it out of their inbox.
 	token := tokenFromLink(t, testMailer.lastTo(t, email).Body)
 
-	user, err := svc.Register(ctx, email, goodPassword, "")
+	user, err := svc.Register(ctx, email, goodPassword, "", "")
 	if err != nil {
 		t.Fatalf("register %s: %v", email, err)
 	}
@@ -41,7 +41,7 @@ func setupOrganizationWithOwner(t *testing.T, svc *Service) (Organization, User)
 	t.Helper()
 	ctx := context.Background()
 
-	alice, err := svc.Register(ctx, "alice@example.com", goodPassword, "Alice")
+	alice, err := svc.Register(ctx, "alice@example.com", goodPassword, "Alice", "")
 	if err != nil {
 		t.Fatalf("register alice: %v", err)
 	}

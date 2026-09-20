@@ -22,11 +22,11 @@ func setupTwoOrganizations(t *testing.T, svc *Service) (acme, globex Organizatio
 	t.Helper()
 	ctx := context.Background()
 
-	alice, err := svc.Register(ctx, "alice@example.com", "correct-horse-battery", "Alice")
+	alice, err := svc.Register(ctx, "alice@example.com", "correct-horse-battery", "Alice", "")
 	if err != nil {
 		t.Fatalf("register alice: %v", err)
 	}
-	bob, err = svc.Register(ctx, "bob@example.com", "correct-horse-battery", "Bob")
+	bob, err = svc.Register(ctx, "bob@example.com", "correct-horse-battery", "Bob", "")
 	if err != nil {
 		t.Fatalf("register bob: %v", err)
 	}
@@ -263,7 +263,7 @@ func TestInvitationCannotBeRedeemedByAnotherUser(t *testing.T) {
 	}
 
 	// Carol, once registered, can still use it -- the token was not consumed.
-	carol, err := svc.Register(ctx, "carol@example.com", "correct-horse-battery", "Carol")
+	carol, err := svc.Register(ctx, "carol@example.com", "correct-horse-battery", "Carol", "")
 	if err != nil {
 		t.Fatalf("register carol: %v", err)
 	}

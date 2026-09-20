@@ -40,7 +40,7 @@ logs() { ${APP_LOGS:-docker compose logs app} 2>&1; }
 # the inbox is the application log.
 verify_email() { logs | grep -o 'token=mtt_ver_[A-Za-z0-9_-]*' | tail -1 | cut -d= -f2; }
 reg() {
-  req POST /auth/register - "{\"email\":\"$1\",\"password\":\"correct-horse-battery\",\"full_name\":\"$1\"}" >/dev/null
+  req POST /auth/register - "{\"email\":\"$1\",\"password\":\"correct-horse-battery\",\"first_name\":\"$1\",\"last_name\":\"\"}" >/dev/null
   req POST /auth/email/verify - "{\"token\":\"$(verify_email)\"}" >/dev/null
 }
 login() { req POST /auth/login - "{\"email\":\"$1\",\"password\":\"correct-horse-battery\"}" >/dev/null; jqr .token; }
